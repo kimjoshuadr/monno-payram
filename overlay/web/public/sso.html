@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Opening your PayRam console</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0f1117; color:#e2e8f0;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .card { background:#1a1e29; border:1px solid #2a3142; border-radius:14px; padding:36px 32px;
+          width:min(420px,92vw); text-align:center; }
+  .spinner { width:38px; height:38px; margin:0 auto 22px; border:3px solid #2a3142;
+             border-top-color:#6366f1; border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  h1 { font-size:18px; margin:0 0 10px; }
+  p { margin:0; font-size:14px; color:#94a3b8; line-height:1.5; }
+  p.err { color:#fca5a5; }
+  a.btn { display:none; margin-top:20px; background:#6366f1; color:#fff; text-decoration:none;
+          padding:10px 18px; border-radius:8px; font-size:14px; font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner" id="spinner"></div>
+    <h1>Opening your PayRam console</h1>
+    <p id="msg">Verifying your secure link.</p>
+    <a class="btn" id="fallback" href="/login">Go to sign in</a>
+  </div>
+<script>
+(function () {
+  var ACCESS = 'payram_access_token';
+  var REFRESH = 'payram_refresh_token';
+  var EXPIRY = 'payram_token_expiry';
+  var USER = 'payram_user';
+
+  var msg = document.getElementById('msg');
+  var spinner = document.getElementById('spinner');
+  var fallback = document.getElementById('fallback');
+
+  function fail(text) {
+    spinner.style.display = 'none';
+    msg.textContent = text;
+    msg.className = 'err';
+    fallback.style.display = 'inline-block';
+  }
+
+  function b64urlDecode(input) {
+    var s = String(input).replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) { s += '='; }
+    return atob(s);
+  }
+
+  function expiryFromJwt(token) {
+    try {
+      var payload = JSON.parse(b64urlDecode(token.split('.')[1]));
+      if (payload && payload.exp) { return payload.exp * 1000; }
+    } catch (e) {}
+    return null;
+  }
+
+  var params = new URLSearchParams(location.hash.replace(/^#/, ''));
+  var code = params.get('code');
+  var exchange = params.get('exchange');
+
+  if (!code || !exchange) {
+    fail('This link is incomplete. Please reopen it from your Monno settings.');
+    return;
+  }
+
+  var url;
+  try { url = new URL(exchange); } catch (e) { url = null; }
+
+  var trustedHost = url && (/(^|\.)monno\.io$/.test(url.hostname) || url.hostname === 'localhost');
+  if (!trustedHost || (url.protocol !== 'https:' && url.hostname !== 'localhost')) {
+    fail('This link came from an untrusted source, so it was not followed.');
+    return;
+  }
+
+  fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ code: code })
+  })
+    .then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        return { ok: response.ok, body: body };
+      });
+    })
+    .then(function (result) {
+      if (!result.ok) {
+        fail((result.body && result.body.message) || 'Could not verify this link.');
+        return;
+      }
+
+      var session = (result.body && result.body.session) || {};
+      var access = session.accessToken || session.access_token;
+      if (!access) {
+        fail('The gateway did not return a session.');
+        return;
+      }
+
+      var refresh = session.refreshToken || session.refresh_token || '';
+      var expiry = expiryFromJwt(access) ||
+        (session.expiresIn ? Date.now() + session.expiresIn * 1000 : Date.now() + 3600000);
+
+      try {
+        localStorage.setItem(ACCESS, access);
+        if (refresh) { localStorage.setItem(REFRESH, refresh); }
+        localStorage.setItem(EXPIRY, String(expiry));
+        localStorage.setItem(USER, JSON.stringify(session));
+      } catch (e) {
+        fail('Your browser blocked storage, so the console cannot be opened here.');
+        return;
+      }
+
+      location.replace('/dashboard');
+    })
+    .catch(function () {
+      fail('Could not reach Monno to verify this link. Please try again.');
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+services:
+  payram:
+    # Built from this repo rather than pulled, so the overlay applies.
+    # The service name must stay `payram` — Coolify's domain mapping
+    # (payram -> pay.monno.io) is keyed on it.
+    build:
+      context: .
+      args:
+        PAYRAM_VERSION: ${PAYRAM_VERSION:-3.8.2}
+    restart: unless-stopped
+    environment:
+      AES_KEY: ${AES_KEY}
+      BLOCKCHAIN_NETWORK_TYPE: ${BLOCKCHAIN_NETWORK_TYPE}
+      SERVER: ${SERVER}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SSL_CERT_PATH: ${SSL_CERT_PATH}
+      PAYMENTS_APP_SERVER_URL: ${PAYMENTS_APP_SERVER_URL}
+    volumes:
+      - payram-data:/root/payram
+      - payram-postgres:/var/lib/payram/db/postgres
+    networks:
+      - payram-network
+
+volumes:
+  payram-data:
+  payram-postgres:
+
+networks:
+  payram-network:
+    driver: bridge

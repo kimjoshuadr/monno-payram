@@ -1,0 +1,55 @@
+name: track-upstream
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find newest upstream release tag
+        id: upstream
+        run: |
+          set -euo pipefail
+          CURRENT=$(cat VERSION)
+          NEWEST=$(curl -fsSL 'https://hub.docker.com/v2/repositories/payramapp/payram/tags?page_size=100' \
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | sort -V | tail -1)
+          echo "current=$CURRENT newest=$NEWEST"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "newest=$NEWEST" >> "$GITHUB_OUTPUT"
+          if [ -n "$NEWEST" ] && [ "$NEWEST" != "$CURRENT" ]; then
+            echo "bump=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump the pin
+        if: steps.upstream.outputs.bump == 'yes'
+        run: |
+          NEW=${{ steps.upstream.outputs.newest }}
+          printf '%s\n' "$NEW" > VERSION
+          sed -i -E "s/(ARG PAYRAM_VERSION=)[0-9.]+/\1$NEW/" Dockerfile
+          sed -i -E "s/(PAYRAM_VERSION:-)[0-9.]+/\1$NEW/" docker-compose.yml
+
+      - name: Open PR
+        if: steps.upstream.outputs.bump == 'yes'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bump-payram-${{ steps.upstream.outputs.newest }}
+          title: "chore: bump PayRam to ${{ steps.upstream.outputs.newest }}"
+          commit-message: "chore: bump PayRam to ${{ steps.upstream.outputs.newest }}"
+          body: |
+            Automated bump from `${{ steps.upstream.outputs.current }}` to `${{ steps.upstream.outputs.newest }}`.
+
+            Upstream moves fast and its UI is minified, so this must not be merged
+            until `build` passes and the console SSO + nav gating are re-checked
+            against the new tag (see README, "Verifying a bump").

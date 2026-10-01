@@ -1,0 +1,27 @@
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static checks (pin + overlay)
+        run: node scripts/verify-static.mjs
+
+      - name: Build image
+        run: |
+          VERSION=$(cat VERSION)
+          docker build --build-arg PAYRAM_VERSION="$VERSION" -t monno-payram:ci .
+
+      - name: Overlay is present in the image
+        run: |
+          docker run --rm monno-payram:ci sh -lc 'test -f /web/public/sso.html'
+          docker run --rm monno-payram:ci sh -lc 'grep -q payram_access_token /web/public/sso.html'
+
+      - name: Vendor routing table untouched
+        run: docker run --rm monno-payram:ci sh -lc 'test -f /etc/nginx/payram-locations.conf'
