@@ -20,17 +20,17 @@ jobs:
 
       - name: Overlays landed in the image
         run: |
-          docker run --rm monno-payram:ci sh -lc 'test -f /web/public/sso.html'
-          docker run --rm monno-payram:ci sh -lc 'grep -q payram_access_token /web/public/sso.html'
-          docker run --rm monno-payram:ci sh -lc 'test -f /web/public/monno-ui.js'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'test -f /web/public/sso.html'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q payram_access_token /web/public/sso.html'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'test -f /web/public/monno-ui.js'
 
       - name: Gate is present in the vendor routing table
         run: |
-          docker run --rm monno-payram:ci sh -lc 'grep -q "sub_filter" /etc/nginx/payram-locations.conf'
-          docker run --rm monno-payram:ci sh -lc 'grep -q "monno-ui.js" /etc/nginx/payram-locations.conf'
-          docker run --rm monno-payram:ci sh -lc 'grep -q "proxy_pass http://payram_frontend" /etc/nginx/payram-locations.conf'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q "sub_filter" /etc/nginx/payram-locations.conf'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q "monno-ui.js" /etc/nginx/payram-locations.conf'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q "proxy_pass http://payram_frontend" /etc/nginx/payram-locations.conf'
 
       - name: Vendor routing table is otherwise intact
         run: |
-          docker run --rm monno-payram:ci sh -lc 'grep -q "location /api/v1/" /etc/nginx/payram-locations.conf'
-          docker run --rm monno-payram:ci sh -lc 'grep -q "location /api/v1/ws" /etc/nginx/payram-locations.conf'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q "location /api/v1/" /etc/nginx/payram-locations.conf'
+          docker run --rm --entrypoint sh monno-payram:ci -lc 'grep -q "location /api/v1/ws" /etc/nginx/payram-locations.conf'
