@@ -30,49 +30,45 @@ writes `payram_access_token` / `payram_refresh_token` / `payram_token_expiry` /
 `payram_user`, and redirects to `/dashboard`. This is the hand-built equivalent
 of Stripe Connect's `login_links`, which PayRam does not offer.
 
-## Dashboard navigation is already gated — do not patch it
+## Console navigation is gated by an injected script
 
-The vendor's dashboard already restricts the sidebar. From the built layout
-chunk:
+The vendor filters nav items by permission, and hides the OPERATOR section
+behind `setupMode === 'operator'`. But the roles are **fixed** (there is no API
+to create one) and an organizer genuinely needs `write_wallet` to register a
+payout wallet — so the only role that fits, `project_admin`, also carries
+Growth, Onramp, Funds Consolidation, Developers and Analytics. No existing role
+expresses "wallet screen only".
 
-```js
-.filter(e => isOperator || 'OPERATOR' !== e.categoryName)   // whole Operator section
-items.filter(e => !e.permission || can(e.permission))        // per-item, by role
-```
+So we gate the console ourselves, at the one extension point the vendor left us:
 
-and `can` is `isAdmin || permissions.has(permission)`, sourced from
-`GET /api/v1/project/{id}/my-access` → `{ role, permissions, isAdmin }`.
+- `scripts/patch-nginx.mjs` appends `sub_filter` directives to the catch-all
+  `location /` in `/etc/nginx/payram-locations.conf` — the vendor's own
+  "single source of truth" routing file, which both the HTTP and HTTPS server
+  blocks include. It patches in place (so upstream routing survives), and
+  **fails the build** if the anchor moves.
+- `overlay/web/public/monno-ui.js` is injected into every dashboard page. It
+  reads `payram_user.role.name` from localStorage, leaves `root`/`admin` alone,
+  and hides the listed sections for everyone else. A MutationObserver re-applies
+  it as the sidebar re-renders on client-side navigation.
 
-Two levers, both API-level, no bundle editing:
+The hide list lives at the top of `monno-ui.js`. Keep it short and obvious;
+it is the only place the console is reshaped.
 
-1. **Member role.** We assign `project_admin` at provisioning
-   (`PayRamMerchantProvisioningService::assignMemberRole`). Narrower roles exist —
-   `project_manager` (view project data) and `project_ops` (payments and
-   customers only). Assigning one of those removes wallet-management and
-   operator items without touching the image.
-2. **`setupMode`.** `isOperator` is literally `setupMode === 'operator'`, and it
-   is **gateway-wide** (`GET /api/v1/operator/setup-mode` → `{"setupMode":"operator"}`
-   today). That is why every user, organizer included, sees the OPERATOR section.
-   It is a single lever for that whole category.
+> Do not "fix" the same problem by narrowing the member's role. `project_manager`
+> and `project_ops` both lack `write_wallet`, which would strand an organizer who
+> has to set a payout address.
 
-**Fallback, if a leak ever survives both:** the vendor's routing table,
-`/etc/nginx/payram-locations.conf`, is explicitly the "single source of truth"
-included by both the HTTP and HTTPS server blocks. Replacing it in the overlay
-lets us add `sub_filter` to the catch-all `location /` and inject a script that
-hides items — no minified-JS surgery:
+## Why the console link exists at all
 
-```nginx
-location / {
-    proxy_pass http://payram_frontend;
-    proxy_set_header Accept-Encoding "";          # rewrite the uncompressed body
-    sub_filter '</head>' '<script src="/monno-ui.js" defer></script></head>';
-    sub_filter_once on;
-    sub_filter_types text/html;
-}
-```
+Registering a payout wallet is not an API call: the dialog's own copy is "Add
+cold wallet and update the Contract using your master account", and it opens a
+wallet-connect prompt. It is an on-chain contract update signed by the master
+wallet. A platform cannot do it on the organizer's behalf without holding their
+private key, which is the custody PayRam exists to avoid.
 
-Only reach for this if the role levers cannot express the restriction: it is
-strictly more fragile than the two API levers above.
+So the console is the only place a payout wallet can be set, and the goal is
+that the organizer opens it once, for one signature, with nothing else in the
+way. This gate is what makes that true.
 
 ## Verifying a bump
 
