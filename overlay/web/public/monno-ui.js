@@ -224,8 +224,24 @@
     return location.pathname.indexOf('/manageWallet') !== -1;
   }
 
+  // Only a dialog that is actually on screen should push the guide aside. The
+  // console (and the wallet libraries it loads) can leave dialog nodes mounted
+  // after they close — a hidden portal child, say — and matching on presence
+  // alone would hide the guide for the rest of the session.
+  function isVisible(el) {
+    if (!el.getClientRects || el.getClientRects().length === 0) return false;
+    var style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+  }
+
   function dialogOpen() {
-    return !!document.querySelector('[role="dialog"], [data-mantine-modal], .mantine-Modal-root');
+    var dialogs = document.querySelectorAll(
+      '[role="dialog"], [aria-modal="true"], .adapter-modal-wrapper, [data-mantine-modal], .mantine-Modal-root'
+    );
+    for (var i = 0; i < dialogs.length; i++) {
+      if (isVisible(dialogs[i])) return true;
+    }
+    return false;
   }
 
   function isSmallScreen() {
@@ -402,9 +418,10 @@
 
     var state = readState();
     var active = currentStepId();
-    // Never sit over a wallet-connect prompt or one of the console's modals.
+    // Yield while a wallet-connect prompt or console modal is on screen — but
+    // if the organizer has explicitly opened the guide, their choice wins.
     var suppressed = dialogOpen();
-    var open = isOpen(state) && !suppressed;
+    var open = isOpen(state) && (!suppressed || state.open === true);
     var card = document.getElementById(GUIDE_ID);
     var pill = document.getElementById(PILL_ID);
 
@@ -412,7 +429,9 @@
     STEPS.forEach(function (step) { if (state.done[step.id]) doneCount++; });
 
     card.hidden = !open;
-    pill.hidden = open || suppressed;
+    // The pill is the way back: keep it whenever the card isn't showing, so the
+    // guide can never vanish silently behind a dialog.
+    pill.hidden = open;
     pill.textContent = 'Crypto setup \u00b7 ' + doneCount + '/2';
 
     if (!open) return;
@@ -463,6 +482,14 @@
     // A couple of delayed passes make the first paint deterministic.
     setTimeout(function () { apply(); updateGuide(); }, 300);
     setTimeout(function () { apply(); updateGuide(); }, 1500);
+
+    // The observer only sees childList changes, so a dialog hidden by toggling
+    // its style or class would not wake us. A light poll covers that without
+    // observing attributes across a page that isn't ours.
+    if (!window.__monnoPoll) {
+      window.__monnoPoll = true;
+      setInterval(function () { apply(); updateGuide(); }, 2000);
+    }
 
     // The default open/collapsed state depends on the viewport, so re-evaluate
     // when it changes (rotate, resize) unless the organizer has chosen already.
