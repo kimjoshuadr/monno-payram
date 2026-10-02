@@ -116,6 +116,23 @@
         return;
       }
 
+      // Hand the console guide the context it can't derive on its own: the
+      // chains the organizer enabled in Monno, and where to send them back.
+      // monno-ui.js reads these; both are optional and degrade gracefully.
+      try {
+        var coins = params.get('coins');
+        if (coins) {
+          localStorage.setItem('monno_setup_coins', JSON.stringify(coins.split(',')));
+        }
+        var back = params.get('back');
+        if (back) {
+          var backUrl = new URL(back);
+          var backTrusted = backUrl.protocol === 'https:' &&
+            (/(^|\.)monno\.io$/.test(backUrl.hostname) || backUrl.hostname === 'localhost');
+          if (backTrusted) { localStorage.setItem('monno_setup_back', backUrl.toString()); }
+        }
+      } catch (e) {}
+
       // Allow the caller to deep-link the organizer to a specific page
       // (e.g. /manageWallet/deposit-wallet when their wallet isn't set up yet).
       // Fall back to /dashboard if not provided.

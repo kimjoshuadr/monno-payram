@@ -9,6 +9,8 @@ only what we own.
 Dockerfile                       FROM payramapp/payram:<VERSION> + overlays
 VERSION                          the pinned upstream tag (CI enforces this)
 overlay/web/public/sso.html      one-time-code console login (see below)
+overlay/web/public/monno-ui.js   console nav gate + wallet setup guide (see below)
+scripts/patch-nginx.mjs          injects monno-ui.js into every dashboard page
 scripts/verify-static.mjs        fails closed if the pin or overlay drifts
 docker-compose.yml               build: .  (service name stays `payram`)
 ```
@@ -58,6 +60,35 @@ it is the only place the console is reshaped.
 > and `project_ops` both lack `write_wallet`, which would strand an organizer who
 > has to set a payout address.
 
+## The wallet setup guide
+
+`monno-ui.js` also docks a small stepper on `/manageWallet` pages, so an
+organizer who lands here knows the two things they must do:
+
+1. create the deposit wallet (`/manageWallet/deposit-wallet`);
+2. add the payout cold wallet (`/manageWallet/wallets/cold`).
+
+It is deliberately dumb, and that is the design:
+
+- **It keys on routes, never on vendor copy.** The two paths above are already
+  part of our contract (`sso.html` redirects to the first). Button labels and
+  headings move between releases; routes do not.
+- **It does not claim to know on-chain state.** Whether a payout wallet is
+  really attached is Monno's to report (organizer settings, which reads the
+  gateway). The guide shows position and the organizer's own ticks only —
+  guessing from a page we don't own would guess wrong.
+- **It never covers the page's own action.** Below 900px it starts collapsed to
+  a `Crypto setup · n/2` pill so the page's "Set Up Deposit Wallet" button stays
+  tappable; tapping the pill opens a full-width bottom sheet (capped at 74vh).
+  It also yields entirely while one of the console's modals — the wallet-connect
+  prompt — is open.
+- **Dismissal sticks.** Hide/expand is remembered in `localStorage`; the pill is
+  always there to bring it back.
+
+The chains it lists come from the organizer's own selection, handed over in the
+SSO fragment (`coins=`) alongside `back=` (the return URL) and persisted by
+`sso.html`. Both are optional: with no `coins` the guide shows all three.
+
 ## Why the console link exists at all
 
 Registering a payout wallet is not an API call: the dialog's own copy is "Add
@@ -79,6 +110,9 @@ passes **and** someone has re-checked, against the new tag:
 - `/sso.html` still serves, and a bad code still surfaces the 410 message;
 - a `project_admin` session still shows no operator tabs (paste the nav filter
   above into the built layout chunk to confirm it is unchanged);
+- the guide's two routes still resolve (`/manageWallet/deposit-wallet`,
+  `/manageWallet/wallets/cold`) — it links to them and keys its step highlight
+  on them, so a renamed route silently points organizers at a 404;
 - `GET /api/v1/operator/setup-mode` is still the expected value.
 
 ## Rollback

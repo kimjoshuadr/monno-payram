@@ -1,18 +1,29 @@
 /**
- * PayRam console UI gate for Monno.
+ * PayRam console UI for Monno.
  *
  * Loaded into every dashboard page by the nginx sub_filter in
- * scripts/patch-nginx.mjs. The operator keeps the full console; an organizer
- * (who only ever comes here to register a payout wallet) is shown the
- * essentials instead of the whole merchant surface.
+ * scripts/patch-nginx.mjs. It has two jobs:
  *
- * Why this exists: the vendor already filters nav items by permission, but the
- * roles are fixed and the organizer genuinely needs `write_wallet`, so the only
- * role that fits also carries growth/onramp/developer items. There is no
- * narrower role to assign, and no API to create one.
+ *   1. Gate the nav — the operator keeps the full console; an organizer (who
+ *      only ever comes here to register a payout wallet) is shown the
+ *      essentials instead of the whole merchant surface.
+ *   2. Guide the wallet setup — a small docked stepper on /manageWallet pages
+ *      so the organizer knows the two things they must do, and can get back.
  *
- * Keep this list small and obvious — it is the only place the console is
- * reshaped, and it must stay easy to reason about.
+ * Why the gate exists: the vendor already filters nav items by permission, but
+ * the roles are fixed and the organizer genuinely needs `write_wallet`, so the
+ * only role that fits also carries growth/onramp/developer items. There is no
+ * narrower role to assign and no API to create one.
+ *
+ * The guide keys on ROUTES, never on the vendor's button or heading copy.
+ * PayRam ships often; the routes are the stable contract (sso.html's `redirect`
+ * already depends on /manageWallet/deposit-wallet), whereas labels move between
+ * releases. Anything pinned to a label would silently rot.
+ *
+ * The guide also does not claim to know on-chain state. Whether a payout wallet
+ * is really attached is Monno's to report (organizer settings); here we only
+ * show position and the organizer's own ticks. Adding DOM-based "detection"
+ * would guess wrong on a page we don't own.
  */
 (function () {
   var HIDE_FOR_ORGANIZERS = [
@@ -26,6 +37,45 @@
   ];
 
   var STYLE_ID = 'monno-nav-gate';
+  var GUIDE_ID = 'monno-setup-guide';
+  var PILL_ID = 'monno-setup-pill';
+  var STATE_KEY = 'monno_setup_guide';
+  var COINS_KEY = 'monno_setup_coins';
+  var BACK_KEY = 'monno_setup_back';
+
+  var DEFAULT_BACK = 'https://app.monno.io';
+
+  // Route -> step. These two paths are the whole setup; both are already part
+  // of our contract with the vendor (sso.html redirects to the first).
+  var STEPS = [
+    {
+      id: 'deposit',
+      title: 'Create your deposit wallet',
+      path: '/manageWallet/deposit-wallet',
+      body: 'This is the on-chain account that receives each buyer\u2019s payment. Pick the option that matches the coins you enabled in Monno.',
+      cta: 'Open deposit wallet'
+    },
+    {
+      id: 'cold',
+      title: 'Add your payout wallet',
+      path: '/manageWallet/wallets/cold',
+      body: 'Your sales sweep straight to this address on-chain. Add the cold wallet you control \u2014 Monno never holds your keys.',
+      cta: 'Open payout wallet'
+    }
+  ];
+
+  var CHAIN_LABELS = {
+    evm: 'EVM smart-contract wallet \u2014 Ethereum, Base, Polygon',
+    bitcoin: 'Bitcoin wallet \u2014 for BTC payouts',
+    tron: 'Tron bridge \u2014 for USDT (TRC-20)'
+  };
+
+  var EVM_COINS = ['ETH', 'USDC', 'USDT', 'POL', 'BASE_ETH', 'BASE_USDC', 'MATIC'];
+  var TRON_COINS = ['TRX', 'TRON_USDT', 'TRON', 'TRC20_USDT'];
+
+  /* ------------------------------------------------------------------ *
+   * Nav gate
+   * ------------------------------------------------------------------ */
 
   function roleName() {
     try {
@@ -34,6 +84,13 @@
     } catch (e) {
       return null;
     }
+  }
+
+  // Everything here is for the organizer. The operator (and a signed-out
+  // visitor) should see the console exactly as the vendor shipped it.
+  function isOrganizer() {
+    var role = roleName();
+    return !!role && role !== 'root' && role !== 'admin';
   }
 
   function ensureStyle() {
@@ -45,8 +102,7 @@
   }
 
   function suppressPermissionToast() {
-    var role = roleName();
-    if (!role || role === 'root' || role === 'admin') return;
+    if (!isOrganizer()) return;
 
     var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
     for (var i = 0; i < toasts.length; i++) {
@@ -63,10 +119,8 @@
   }
 
   function apply() {
-    var role = roleName();
-
     // No session yet, or an operator/admin: leave the console alone.
-    if (!role || role === 'root' || role === 'admin') return;
+    if (!isOrganizer()) return;
 
     ensureStyle();
     suppressPermissionToast();
@@ -96,72 +150,328 @@
     }
   }
 
-  function injectOnboardingGuide() {
-    // Only show on wallet setup pages
-    var path = location.pathname;
-    if (path.indexOf('/manageWallet') === -1) return;
-    if (document.getElementById('monno-onboarding-guide')) return;
+  /* ------------------------------------------------------------------ *
+   * Setup guide
+   * ------------------------------------------------------------------ */
 
-    var GUIDE_STYLE = [
-      '#monno-onboarding-guide {',
-      '  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;',
-      '  background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%);',
-      '  color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;',
-      '  padding: 12px 20px; display: flex; align-items: flex-start; gap: 14px;',
-      '  box-shadow: 0 4px 16px rgba(0,0,0,0.25);',
-      '}',
-      '#monno-onboarding-guide .monno-guide-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }',
-      '#monno-onboarding-guide .monno-guide-body { flex: 1; }',
-      '#monno-onboarding-guide .monno-guide-title { font-size: 13px; font-weight: 700; margin: 0 0 4px; }',
-      '#monno-onboarding-guide .monno-guide-steps { font-size: 12px; margin: 0; padding-left: 16px; opacity: 0.92; line-height: 1.6; }',
-      '#monno-onboarding-guide .monno-guide-note { font-size: 11px; margin: 6px 0 0; opacity: 0.75; }',
-      '#monno-onboarding-guide .monno-guide-close {',
-      '  flex-shrink: 0; background: rgba(255,255,255,0.15); border: none; color: #fff;',
-      '  cursor: pointer; border-radius: 6px; padding: 4px 10px; font-size: 12px; margin-top: 1px;',
-      '}',
-      '#monno-onboarding-guide .monno-guide-close:hover { background: rgba(255,255,255,0.25); }',
-    ].join('\n');
-
-    var styleEl = document.createElement('style');
-    styleEl.textContent = GUIDE_STYLE;
-    document.head.appendChild(styleEl);
-
-    var guide = document.createElement('div');
-    guide.id = 'monno-onboarding-guide';
-    guide.innerHTML = [
-      '<div class="monno-guide-icon">👋</div>',
-      '<div class="monno-guide-body">',
-      '  <p class="monno-guide-title">Complete your crypto payment setup — 3 quick steps</p>',
-      '  <ol class="monno-guide-steps">',
-      '    <li><strong>Connect your master wallet</strong> (MetaMask or WalletConnect) using the button on this page</li>',
-      '    <li><strong>Click "EVM — Smart Contract"</strong>, then <strong>"Create wallet"</strong> to deploy your on-chain deposit contract</li>',
-      '    <li>Go to <a href="/manageWallet/wallets/cold" style="color:#c4b5fd;font-weight:600">Wallet management → Cold Wallet</a> and add your <strong>payout wallet address</strong> so funds sweep to you automatically</li>',
-      '  </ol>',
-      '  <p class="monno-guide-note">💡 You only do this once. After setup, Monno automatically routes all ticket sale crypto into your wallet.</p>',
-      '</div>',
-      '<button class="monno-guide-close" onclick="document.getElementById(\'monno-onboarding-guide\').remove()">Got it</button>',
-    ].join('');
-
-    document.body.insertBefore(guide, document.body.firstChild);
-
-    // Push page content down so the banner doesn't overlap
-    document.body.style.marginTop = (guide.offsetHeight + 8) + 'px';
+  function readState() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}') || {};
+      var done = raw.done || {};
+      return {
+        done: {deposit: !!done.deposit, cold: !!done.cold},
+        // `null` until the organizer touches it, so the viewport picks the
+        // default: docked open on desktop, collapsed to a pill on phones where
+        // a full-width sheet would sit over the page's own "Set Up" button.
+        open: typeof raw.open === 'boolean' ? raw.open : null
+      };
+    } catch (e) {
+      return {done: {deposit: false, cold: false}, open: null};
+    }
   }
+
+  function writeState(state) {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    } catch (e) { /* storage blocked — the guide simply won't remember */ }
+  }
+
+  function selectedChains() {
+    var coins = [];
+    try {
+      coins = JSON.parse(localStorage.getItem(COINS_KEY) || '[]') || [];
+    } catch (e) { coins = []; }
+
+    // No selection recorded (older link, or the platform hasn't been deployed
+    // yet): show every chain rather than guessing one.
+    if (!coins.length) return ['evm', 'bitcoin', 'tron'];
+
+    var picked = {evm: false, bitcoin: false, tron: false};
+    coins.forEach(function (coin) {
+      var code = String(coin).toUpperCase();
+      if (EVM_COINS.indexOf(code) !== -1) picked.evm = true;
+      else if (code === 'BTC') picked.bitcoin = true;
+      else if (TRON_COINS.indexOf(code) !== -1) picked.tron = true;
+    });
+
+    var out = Object.keys(picked).filter(function (key) { return picked[key]; });
+    return out.length ? out : ['evm'];
+  }
+
+  function backUrl() {
+    var fallback = DEFAULT_BACK;
+    try {
+      var stored = localStorage.getItem(BACK_KEY);
+      if (!stored) return fallback;
+      var url = new URL(stored);
+      var trusted = url.protocol === 'https:' &&
+        (/(^|\.)monno\.io$/.test(url.hostname) || url.hostname === 'localhost');
+      return trusted ? url.toString() : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function currentStepId() {
+    var path = location.pathname;
+    for (var i = 0; i < STEPS.length; i++) {
+      if (path.indexOf(STEPS[i].path) !== -1) return STEPS[i].id;
+    }
+    return null;
+  }
+
+  function isWalletArea() {
+    return location.pathname.indexOf('/manageWallet') !== -1;
+  }
+
+  function dialogOpen() {
+    return !!document.querySelector('[role="dialog"], [data-mantine-modal], .mantine-Modal-root');
+  }
+
+  function isSmallScreen() {
+    // Matches the CSS breakpoint below. Below it a right-docked card crowds the
+    // page (and a full sheet would cover the page's own "Set Up" button), so we
+    // start collapsed to a pill instead.
+    return window.matchMedia('(max-width: 900px)').matches;
+  }
+
+  function isOpen(state) {
+    return state.open === null ? !isSmallScreen() : state.open;
+  }
+
+  function guideCss() {
+    return [
+      '#' + GUIDE_ID + ', #' + PILL_ID + ' * { box-sizing: border-box; }',
+      '#' + GUIDE_ID + ' {',
+      '  position: fixed; z-index: 50; right: 20px; bottom: 20px; width: 340px;',
+      '  max-width: calc(100vw - 32px); background: #fff; color: #1e293b;',
+      '  border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden;',
+      '  box-shadow: 0 12px 32px rgba(15,23,42,.18);',
+      '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
+      '  font-size: 13px; line-height: 1.5; text-align: left;',
+      '}',
+      '#' + GUIDE_ID + '[hidden] { display: none !important; }',
+      '#' + GUIDE_ID + ' .monno-guide-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #eef2f7; }',
+      '#' + GUIDE_ID + ' .monno-guide-title { font-weight: 700; font-size: 13px; flex: 1; }',
+      '#' + GUIDE_ID + ' .monno-guide-progress { font-size: 11px; font-weight: 600; color: #4f46e5; background: rgba(99,102,241,.1); padding: 2px 8px; border-radius: 99px; white-space: nowrap; }',
+      '#' + GUIDE_ID + ' .monno-guide-steps { list-style: none; margin: 0; padding: 6px; }',
+      '#' + GUIDE_ID + ' .monno-guide-steps > li { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 10px; }',
+      '#' + GUIDE_ID + ' .monno-guide-steps > li.is-current { background: rgba(99,102,241,.07); }',
+      '#' + GUIDE_ID + ' .monno-guide-check { flex: 0 0 auto; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 2px solid #cbd5e1; background: #fff; color: transparent; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; }',
+      '#' + GUIDE_ID + ' li.is-done .monno-guide-check { background: #10b981; border-color: #10b981; color: #fff; }',
+      '#' + GUIDE_ID + ' li.is-current .monno-guide-check { border-color: #6366f1; }',
+      '#' + GUIDE_ID + ' .monno-guide-step-title { font-weight: 600; color: #1e293b; text-decoration: none; }',
+      '#' + GUIDE_ID + ' .monno-guide-step-title:hover { color: #4f46e5; }',
+      '#' + GUIDE_ID + ' .monno-guide-step-body { margin: 2px 0 0; color: #64748b; font-size: 12px; }',
+      '#' + GUIDE_ID + ' .monno-guide-chains { margin: 6px 0 0; padding: 0; list-style: none; }',
+      '#' + GUIDE_ID + ' .monno-guide-chains li { font-size: 11.5px; color: #64748b; margin-top: 2px; }',
+      '#' + GUIDE_ID + ' .monno-guide-chains li.is-pick { color: #4f46e5; font-weight: 600; }',
+      '#' + GUIDE_ID + ' .monno-guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-top: 1px solid #eef2f7; background: #f8fafc; }',
+      '#' + GUIDE_ID + ' .monno-guide-back { color: #4f46e5; font-weight: 600; text-decoration: none; font-size: 12px; }',
+      '#' + GUIDE_ID + ' .monno-guide-back:hover { text-decoration: underline; }',
+      '#' + GUIDE_ID + ' .monno-guide-hide { border: 0; background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; }',
+      '#' + GUIDE_ID + ' .monno-guide-hide:hover { color: #475569; }',
+      '#' + PILL_ID + ' { position: fixed; z-index: 50; right: 20px; bottom: 20px; background: #4f46e5; color: #fff; border: 0; border-radius: 99px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px rgba(79,70,229,.35); }',
+      '#' + PILL_ID + '[hidden] { display: none !important; }',
+      '@media (max-width: 900px) {',
+      '  #' + GUIDE_ID + ' { right: 0; left: 0; bottom: 0; width: auto; max-width: none; border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); max-height: 74vh; display: flex; flex-direction: column; }',
+      '  #' + GUIDE_ID + ' .monno-guide-steps { flex: 1 1 auto; overflow-y: auto; }',
+      '  #' + GUIDE_ID + ' .monno-guide-check { width: 26px; height: 26px; }',
+      '  #' + GUIDE_ID + ' .monno-guide-back, #' + GUIDE_ID + ' .monno-guide-hide { padding: 8px 4px; }',
+      '  #' + PILL_ID + ' { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }',
+      '}'
+    ].join('\n');
+  }
+
+  function chainsHtml() {
+    var picked = selectedChains();
+    var order = ['evm', 'bitcoin', 'tron'];
+    return '<ul class="monno-guide-chains">' + order.map(function (key) {
+      var isPick = picked.indexOf(key) !== -1;
+      return '<li class="' + (isPick ? 'is-pick' : '') + '">' +
+        (isPick ? '\u2022 ' : '\u00b7 ') + CHAIN_LABELS[key] +
+        '</li>';
+    }).join('') + '</ul>';
+  }
+
+  function stepsHtml() {
+    return STEPS.map(function (step) {
+      return [
+        '<li data-monno-step="' + step.id + '">',
+        '  <button type="button" class="monno-guide-check" data-monno="toggle"',
+        '          data-step="' + step.id + '" aria-pressed="false"',
+        '          aria-label="Mark &quot;' + step.title + '&quot; as done">\u2713</button>',
+        '  <div>',
+        '    <a class="monno-guide-step-title" href="' + step.path + '">' + step.title + '</a>',
+        '    <p class="monno-guide-step-body">' + step.body + '</p>',
+        (step.id === 'deposit' ? chainsHtml() : ''),
+        '  </div>',
+        '</li>'
+      ].join('\n');
+    }).join('\n');
+  }
+
+  function shellHtml() {
+    return [
+      '<div class="monno-guide-head">',
+      '  <span class="monno-guide-title">Crypto setup</span>',
+      '  <span class="monno-guide-progress" data-monno="progress">0 of 2 done</span>',
+      '</div>',
+      '<ol class="monno-guide-steps">',
+      stepsHtml(),
+      '</ol>',
+      '<div class="monno-guide-foot">',
+      '  <a class="monno-guide-back" data-monno="back" href="' + backUrl() + '">Back to Monno settings</a>',
+      '  <button type="button" class="monno-guide-hide" data-monno="hide">Hide guide</button>',
+      '</div>'
+    ].join('\n');
+  }
+
+  function onGuideClick(event) {
+    var target = event.target.closest('[data-monno]');
+    if (!target) return;
+
+    var action = target.getAttribute('data-monno');
+
+    if (action === 'hide') {
+      var hiddenState = readState();
+      hiddenState.open = false;
+      writeState(hiddenState);
+      updateGuide();
+      return;
+    }
+
+    if (action === 'toggle') {
+      var stepId = target.getAttribute('data-step');
+      if (stepId !== 'deposit' && stepId !== 'cold') return;
+      var state = readState();
+      state.done[stepId] = !state.done[stepId];
+      writeState(state);
+      updateGuide();
+    }
+  }
+
+  function ensureGuide() {
+    if (!document.getElementById(STYLE_ID + '-guide')) {
+      var style = document.createElement('style');
+      style.id = STYLE_ID + '-guide';
+      style.textContent = guideCss();
+      document.head.appendChild(style);
+    }
+
+    var guide = document.getElementById(GUIDE_ID);
+    if (!guide) {
+      guide = document.createElement('div');
+      guide.id = GUIDE_ID;
+      guide.setAttribute('role', 'complementary');
+      guide.setAttribute('aria-label', 'Crypto payment setup guide');
+      guide.innerHTML = shellHtml();
+      guide.addEventListener('click', onGuideClick);
+      document.body.appendChild(guide);
+    }
+
+    if (!document.getElementById(PILL_ID)) {
+      var pill = document.createElement('button');
+      pill.id = PILL_ID;
+      pill.type = 'button';
+      pill.textContent = 'Crypto setup';
+      pill.addEventListener('click', function () {
+        var state = readState();
+        state.open = true;
+        writeState(state);
+        updateGuide();
+      });
+      document.body.appendChild(pill);
+    }
+  }
+
+  function removeGuide() {
+    var guide = document.getElementById(GUIDE_ID);
+    if (guide) guide.remove();
+    var pill = document.getElementById(PILL_ID);
+    if (pill) pill.remove();
+  }
+
+  function updateGuide() {
+    if (!isWalletArea() || !isOrganizer()) {
+      removeGuide();
+      return;
+    }
+
+    ensureGuide();
+
+    var state = readState();
+    var active = currentStepId();
+    // Never sit over a wallet-connect prompt or one of the console's modals.
+    var suppressed = dialogOpen();
+    var open = isOpen(state) && !suppressed;
+    var card = document.getElementById(GUIDE_ID);
+    var pill = document.getElementById(PILL_ID);
+
+    var doneCount = 0;
+    STEPS.forEach(function (step) { if (state.done[step.id]) doneCount++; });
+
+    card.hidden = !open;
+    pill.hidden = open || suppressed;
+    pill.textContent = 'Crypto setup \u00b7 ' + doneCount + '/2';
+
+    if (!open) return;
+
+    STEPS.forEach(function (step) {
+      var li = card.querySelector('[data-monno-step="' + step.id + '"]');
+      if (!li) return;
+      var isDone = state.done[step.id];
+      li.classList.toggle('is-done', isDone);
+      li.classList.toggle('is-current', step.id === active && !isDone);
+      var check = li.querySelector('[data-monno="toggle"]');
+      if (check) check.setAttribute('aria-pressed', isDone ? 'true' : 'false');
+    });
+
+    var progress = card.querySelector('[data-monno="progress"]');
+    if (progress) progress.textContent = doneCount + ' of 2 done';
+
+    var back = card.querySelector('[data-monno="back"]');
+    if (back) back.setAttribute('href', backUrl());
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Boot
+   * ------------------------------------------------------------------ */
 
   function boot() {
     apply();
-    injectOnboardingGuide();
-    var observer = new MutationObserver(function () {
-      apply();
-      // Re-check guide on route changes (SPA navigation updates pathname)
-      injectOnboardingGuide();
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    // Route changes still re-render the sidebar; the observer covers it, but a
-    // couple of delayed passes make the first paint deterministic.
-    setTimeout(apply, 300);
-    setTimeout(apply, 1500);
-    setTimeout(injectOnboardingGuide, 500);
+    updateGuide();
+
+    // Vendors re-render on client-side navigation, so re-check. Throttled to a
+    // frame: the guide is cheap, but this page isn't ours and the observer
+    // fires on every DOM change the console makes.
+    if (!window.__monnoObserver) {
+      var scheduled = false;
+      var observer = new MutationObserver(function () {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(function () {
+          scheduled = false;
+          apply();
+          updateGuide();
+        });
+      });
+      observer.observe(document.body || document.documentElement, {childList: true, subtree: true});
+      window.__monnoObserver = observer;
+    }
+
+    // A couple of delayed passes make the first paint deterministic.
+    setTimeout(function () { apply(); updateGuide(); }, 300);
+    setTimeout(function () { apply(); updateGuide(); }, 1500);
+
+    // The default open/collapsed state depends on the viewport, so re-evaluate
+    // when it changes (rotate, resize) unless the organizer has chosen already.
+    if (!window.__monnoResize) {
+      window.__monnoResize = true;
+      window.addEventListener('resize', function () {
+        if (readState().open === null) updateGuide();
+      });
+    }
   }
 
   if (document.readyState === 'loading') {
