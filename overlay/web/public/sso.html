@@ -116,7 +116,13 @@
         return;
       }
 
-      location.replace('/dashboard');
+      // Allow the caller to deep-link the organizer to a specific page
+      // (e.g. /manageWallet/deposit-wallet when their wallet isn't set up yet).
+      // Fall back to /dashboard if not provided.
+      var redirect = params.get('redirect') || '/dashboard';
+      // Whitelist: only internal paths (starting with /) are accepted.
+      if (!redirect.startsWith('/')) { redirect = '/dashboard'; }
+      location.replace(redirect);
     })
     .catch(function () {
       fail('Could not reach Monno to verify this link. Please try again.');

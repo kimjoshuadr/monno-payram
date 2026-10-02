@@ -96,14 +96,72 @@
     }
   }
 
+  function injectOnboardingGuide() {
+    // Only show on wallet setup pages
+    var path = location.pathname;
+    if (path.indexOf('/manageWallet') === -1) return;
+    if (document.getElementById('monno-onboarding-guide')) return;
+
+    var GUIDE_STYLE = [
+      '#monno-onboarding-guide {',
+      '  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;',
+      '  background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%);',
+      '  color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;',
+      '  padding: 12px 20px; display: flex; align-items: flex-start; gap: 14px;',
+      '  box-shadow: 0 4px 16px rgba(0,0,0,0.25);',
+      '}',
+      '#monno-onboarding-guide .monno-guide-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }',
+      '#monno-onboarding-guide .monno-guide-body { flex: 1; }',
+      '#monno-onboarding-guide .monno-guide-title { font-size: 13px; font-weight: 700; margin: 0 0 4px; }',
+      '#monno-onboarding-guide .monno-guide-steps { font-size: 12px; margin: 0; padding-left: 16px; opacity: 0.92; line-height: 1.6; }',
+      '#monno-onboarding-guide .monno-guide-note { font-size: 11px; margin: 6px 0 0; opacity: 0.75; }',
+      '#monno-onboarding-guide .monno-guide-close {',
+      '  flex-shrink: 0; background: rgba(255,255,255,0.15); border: none; color: #fff;',
+      '  cursor: pointer; border-radius: 6px; padding: 4px 10px; font-size: 12px; margin-top: 1px;',
+      '}',
+      '#monno-onboarding-guide .monno-guide-close:hover { background: rgba(255,255,255,0.25); }',
+    ].join('\n');
+
+    var styleEl = document.createElement('style');
+    styleEl.textContent = GUIDE_STYLE;
+    document.head.appendChild(styleEl);
+
+    var guide = document.createElement('div');
+    guide.id = 'monno-onboarding-guide';
+    guide.innerHTML = [
+      '<div class="monno-guide-icon">👋</div>',
+      '<div class="monno-guide-body">',
+      '  <p class="monno-guide-title">Complete your crypto payment setup — 3 quick steps</p>',
+      '  <ol class="monno-guide-steps">',
+      '    <li><strong>Connect your master wallet</strong> (MetaMask or WalletConnect) using the button on this page</li>',
+      '    <li><strong>Click "EVM — Smart Contract"</strong>, then <strong>"Create wallet"</strong> to deploy your on-chain deposit contract</li>',
+      '    <li>Go to <a href="/manageWallet/wallets/cold" style="color:#c4b5fd;font-weight:600">Wallet management → Cold Wallet</a> and add your <strong>payout wallet address</strong> so funds sweep to you automatically</li>',
+      '  </ol>',
+      '  <p class="monno-guide-note">💡 You only do this once. After setup, Monno automatically routes all ticket sale crypto into your wallet.</p>',
+      '</div>',
+      '<button class="monno-guide-close" onclick="document.getElementById(\'monno-onboarding-guide\').remove()">Got it</button>',
+    ].join('');
+
+    document.body.insertBefore(guide, document.body.firstChild);
+
+    // Push page content down so the banner doesn't overlap
+    document.body.style.marginTop = (guide.offsetHeight + 8) + 'px';
+  }
+
   function boot() {
     apply();
-    var observer = new MutationObserver(function () { apply(); });
+    injectOnboardingGuide();
+    var observer = new MutationObserver(function () {
+      apply();
+      // Re-check guide on route changes (SPA navigation updates pathname)
+      injectOnboardingGuide();
+    });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     // Route changes still re-render the sidebar; the observer covers it, but a
     // couple of delayed passes make the first paint deterministic.
     setTimeout(apply, 300);
     setTimeout(apply, 1500);
+    setTimeout(injectOnboardingGuide, 500);
   }
 
   if (document.readyState === 'loading') {
