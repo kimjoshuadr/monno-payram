@@ -43,6 +43,7 @@
   var COINS_KEY = 'monno_setup_coins';
   var BACK_KEY = 'monno_setup_back';
   var WALLET_KEY = 'monno_setup_wallet';
+  var ORGANIZER_KEY = 'monno_setup_organizer';
 
   var DEFAULT_BACK = 'https://app.monno.io';
 
@@ -93,9 +94,22 @@
 
   // Everything here is for the organizer. The operator (and a signed-out
   // visitor) should see the console exactly as the vendor shipped it.
+  function hasSession() {
+    try { return !!localStorage.getItem('payram_user'); } catch (e) { return false; }
+  }
+
+  // Monno minted this session from an organizer's SSO link, so we treat them as
+  // the organizer even if the console reshapes `payram_user` while booting and
+  // the role we read there goes missing. A real operator session always wins.
+  function monnoMinted() {
+    try { return localStorage.getItem(ORGANIZER_KEY) === '1'; } catch (e) { return false; }
+  }
+
   function isOrganizer() {
     var role = roleName();
-    return !!role && role !== 'root' && role !== 'admin';
+    if (role === 'root' || role === 'admin') return false;
+    if (monnoMinted()) return true;
+    return !!role;
   }
 
   function ensureStyle() {
@@ -125,7 +139,7 @@
 
   function apply() {
     // No session yet, or an operator/admin: leave the console alone.
-    if (!isOrganizer()) return;
+    if (!hasSession() || !isOrganizer()) return;
 
     ensureStyle();
     suppressPermissionToast();
@@ -423,7 +437,7 @@
   }
 
   function updateGuide() {
-    if ((!isWalletArea() && !walletSetupPending()) || !isOrganizer()) {
+    if ((!isWalletArea() && !walletSetupPending()) || !hasSession() || !isOrganizer()) {
       removeGuide();
       return;
     }

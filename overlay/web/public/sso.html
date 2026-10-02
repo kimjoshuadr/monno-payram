@@ -141,6 +141,11 @@
         if (wallet) { localStorage.setItem('monno_setup_wallet', wallet === 'needs' ? '1' : '0'); }
       } catch (e) {}
 
+      // A session minted here is always an organizer's. The console owns
+      // payram_user and may reshape it while booting, so mark the audience
+      // explicitly — otherwise the guide disappears when the role read fails.
+      try { localStorage.setItem('monno_setup_organizer', '1'); } catch (e) {}
+
       // Allow the caller to deep-link the organizer to a specific page
       // (e.g. /manageWallet/deposit-wallet when their wallet isn't set up yet).
       // Fall back to /dashboard if not provided.
