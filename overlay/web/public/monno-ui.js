@@ -44,6 +44,24 @@
     document.head.appendChild(style);
   }
 
+  function suppressPermissionToast() {
+    var role = roleName();
+    if (!role || role === 'root' || role === 'admin') return;
+
+    var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
+    for (var i = 0; i < toasts.length; i++) {
+      var el = toasts[i];
+      if (el.textContent && el.textContent.indexOf('permission for some request') !== -1) {
+        var container = el.closest('[role="status"]') || el.closest('[role="alert"]') || el;
+        if (container.parentElement && container.parentElement.style && container.parentElement.style.position === 'fixed') {
+          container.parentElement.style.display = 'none';
+        } else {
+          container.style.display = 'none';
+        }
+      }
+    }
+  }
+
   function apply() {
     var role = roleName();
 
@@ -51,6 +69,7 @@
     if (!role || role === 'root' || role === 'admin') return;
 
     ensureStyle();
+    suppressPermissionToast();
 
     var nav = document.querySelector('nav') || document.querySelector('aside');
     if (!nav) return;
