@@ -133,6 +133,14 @@
         }
       } catch (e) {}
 
+      // Whether the payout wallet is still unconfirmed. While it is, the console
+      // guide follows the organizer off the wallet pages too, so it can't vanish
+      // when the console lands them somewhere else (e.g. the dashboard).
+      try {
+        var wallet = params.get('wallet');
+        if (wallet) { localStorage.setItem('monno_setup_wallet', wallet === 'needs' ? '1' : '0'); }
+      } catch (e) {}
+
       // Allow the caller to deep-link the organizer to a specific page
       // (e.g. /manageWallet/deposit-wallet when their wallet isn't set up yet).
       // Fall back to /dashboard if not provided.

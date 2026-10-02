@@ -42,6 +42,7 @@
   var STATE_KEY = 'monno_setup_guide';
   var COINS_KEY = 'monno_setup_coins';
   var BACK_KEY = 'monno_setup_back';
+  var WALLET_KEY = 'monno_setup_wallet';
 
   var DEFAULT_BACK = 'https://app.monno.io';
 
@@ -79,8 +80,12 @@
 
   function roleName() {
     try {
-      var user = JSON.parse(localStorage.getItem('payram_user') || '{}');
-      return (user && user.role && user.role.name) || null;
+      var user = JSON.parse(localStorage.getItem('payram_user') || '{}') || {};
+      var role = user.role;
+      if (!role) return null;
+      // The console stores the role as an object; tolerate a plain string too,
+      // so a shape change on their side doesn't hide the guide.
+      return typeof role === 'string' ? role : (role.name || null);
     } catch (e) {
       return null;
     }
@@ -222,6 +227,15 @@
 
   function isWalletArea() {
     return location.pathname.indexOf('/manageWallet') !== -1;
+  }
+
+  // Monno tells us, through the one-time SSO link, when the organizer's payout
+  // wallet is still unconfirmed. While that holds, the guide follows them
+  // anywhere in the console: /manageWallet is where they set it up, but the
+  // console can land them elsewhere (the dashboard), and it must not vanish
+  // with the route.
+  function walletSetupPending() {
+    try { return localStorage.getItem(WALLET_KEY) === '1'; } catch (e) { return false; }
   }
 
   // Only a dialog that is actually on screen should push the guide aside. The
@@ -409,7 +423,7 @@
   }
 
   function updateGuide() {
-    if (!isWalletArea() || !isOrganizer()) {
+    if ((!isWalletArea() && !walletSetupPending()) || !isOrganizer()) {
       removeGuide();
       return;
     }
