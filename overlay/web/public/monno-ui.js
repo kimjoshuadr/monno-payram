@@ -47,6 +47,12 @@
   var STYLE_ID = 'monno-nav-gate';
   var GUIDE_ID = 'monno-setup-guide';
   var PILL_ID = 'monno-setup-pill';
+  // A version marker so a stale copy is never mistaken for a broken fix: the
+  // overlay is served from a fixed URL with no cache-busting, and a long-lived
+  // tab will happily keep running an old one.
+  var MONNO_UI_VERSION = '2026-10-03.1';
+  try { window.__monnoUiVersion = MONNO_UI_VERSION; } catch (e) {}
+
   var STATE_KEY = 'monno_setup_guide';
   var COINS_KEY = 'monno_setup_coins';
   var BACK_KEY = 'monno_setup_back';
