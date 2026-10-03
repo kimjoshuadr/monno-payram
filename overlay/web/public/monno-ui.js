@@ -335,6 +335,15 @@
     return location.pathname.indexOf('/manageWallet') !== -1;
   }
 
+  // Pages that belong to the buyer, not the organizer. The checkout shows a
+  // payment reference and the merchant's name, and the organizer is often the
+  // one who opens it to test — which is how they ended up being shown their own
+  // setup guide over a buyer's payment options. Never guide here.
+  function isBuyerArea() {
+    var path = location.pathname;
+    return path.indexOf('/payments') === 0 || path.indexOf('/payment/') === 0;
+  }
+
   // Monno tells us, through the one-time SSO link, when the organizer's payout
   // wallet is still unconfirmed. While that holds, the guide follows them
   // anywhere in the console: /manageWallet is where they set it up, but the
@@ -547,7 +556,7 @@
   }
 
   function updateGuide() {
-    if ((!isWalletArea() && !walletSetupPending()) || !hasSession() || !isOrganizer()) {
+    if (isBuyerArea() || (!isWalletArea() && !walletSetupPending()) || !hasSession() || !isOrganizer()) {
       removeGuide();
       return;
     }
