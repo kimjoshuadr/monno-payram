@@ -26,14 +26,22 @@
  * would guess wrong on a page we don't own.
  */
 (function () {
+  // The console shows organizers items their role cannot actually use: those
+  // pages 403 in the background (which surfaces as a red "permission" toast) and
+  // they lead nowhere. Hiding the rows is the vendor's own permission model
+  // applied one level up, and it is why the guide bothers to gate the nav at all.
+  //
+  // Entries render as class-styled <li>/<div> rows, so match on the label text
+  // of a clickable-looking row rather than on a tag name.
   var HIDE_FOR_ORGANIZERS = [
-    'Operator',              // operator-only section (belt and braces)
+    'Operator',
     'Fees',
     'Onramp',
     'Growth',
     'Funds Consolidation',
     'Developers',
-    'Analytics'
+    'Analytics',
+    'Withdraw'
   ];
 
   var STYLE_ID = 'monno-nav-gate';
@@ -134,20 +142,39 @@
     document.head.appendChild(style);
   }
 
+  // The console shows a red "You don't have permission for some request" toast
+  // whenever any background call 403s. An organizer's session triggers these
+  // routinely (operator-only endpoints load anyway), and the toast is noise
+  // about a request they never made — not something they can act on.
+  //
+  // The toast library is Toastify: it renders a <section class="Toastify"> with
+  // the message in a descendant, and it is not exposed via role=status, so
+  // matching ARIA roles alone missed every one of them.
+  function isPermissionToast(el) {
+    var text = (el.textContent || '');
+    return text.indexOf('permission for some request') !== -1
+      || text.indexOf('not authorized') !== -1;
+  }
+
   function suppressPermissionToast() {
     if (!isOrganizer()) return;
 
-    var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
-    for (var i = 0; i < toasts.length; i++) {
-      var el = toasts[i];
-      if (el.textContent && el.textContent.indexOf('permission for some request') !== -1) {
-        var container = el.closest('[role="status"]') || el.closest('[role="alert"]') || el;
-        if (container.parentElement && container.parentElement.style && container.parentElement.style.position === 'fixed') {
-          container.parentElement.style.display = 'none';
-        } else {
-          container.style.display = 'none';
-        }
+    // Toastify's container lives outside the app tree; hide the whole stack
+    // rather than trying to hide individual toasts mid-animation.
+    var stacks = document.querySelectorAll('.Toastify__toast-container, .Toastify__toast, .Toastify');
+    for (var i = 0; i < stacks.length; i++) {
+      if (isPermissionToast(stacks[i])) {
+        stacks[i].style.display = 'none';
       }
+    }
+
+    // Fall back to the generic containers for any non-Toastify surface.
+    var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
+    for (var j = 0; j < toasts.length; j++) {
+      var el = toasts[j];
+      if (!isPermissionToast(el)) continue;
+      var container = el.closest('[role="status"]') || el.closest('[role="alert"]') || el;
+      container.style.display = 'none';
     }
   }
 
@@ -161,14 +188,17 @@
     var nav = document.querySelector('nav') || document.querySelector('aside');
     if (!nav) return;
 
+    // The console renders nav entries as class-styled <li>/<div> rows, not as
+    // links or buttons — matching only those found nothing and left every
+    // operator item visible to organizers. Match the row itself instead: the
+    // smallest element whose own text is exactly the label.
     var wanted = {};
     HIDE_FOR_ORGANIZERS.forEach(function (label) { wanted[label.toLowerCase()] = true; });
 
-    // Match only leaf-ish nodes so we never hide a container that also holds a
-    // wanted item.
-    var candidates = nav.querySelectorAll('a, button, [role="button"]');
+    var candidates = document.querySelectorAll('li, a, button, [role="button"], [role="menuitem"]');
     for (var i = 0; i < candidates.length; i++) {
       var el = candidates[i];
+      if (!nav.contains(el)) continue;
       if (el.hasAttribute('data-monno-hidden')) continue;
 
       var text = (el.textContent || '').trim();
