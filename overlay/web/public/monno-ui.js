@@ -77,7 +77,7 @@
       id: 'deposit',
       title: 'Set up your deposit wallet',
       path: '/manageWallet/deposit-wallet',
-      body: 'The wizard deploys the on-chain account that receives each buyer\u2019s payment, and asks for the cold wallet your sales sweep to \u2014 you set both in the same flow. Do it for each network you accept.',
+      body: 'The wizard deploys the on-chain account that receives each buyer\u2019s payment, and asks for the cold wallet your sales sweep to \u2014 both in the same flow. You only need the networks you actually accept; one is enough to start.',
       doneHint: 'The contracts already deployed are listed here. If a network is still unconfigured, set it up the same way.',
       routeMatches: function () {
         // /manageWallet/deposit-wallet is the create prompt before a wallet
@@ -406,6 +406,7 @@
       '#' + GUIDE_ID + ' .monno-guide-chains { margin: 6px 0 0; padding: 0; list-style: none; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li { font-size: 11.5px; color: #64748b; margin-top: 2px; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li.is-pick { color: #4f46e5; font-weight: 600; }',
+      '#' + GUIDE_ID + ' .monno-guide-chains-note { margin: 4px 0 0; color: #94a3b8; font-size: 11px; font-style: italic; }',
       '#' + GUIDE_ID + ' .monno-guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-top: 1px solid #eef2f7; background: #f8fafc; }',
       '#' + GUIDE_ID + ' .monno-guide-back { color: #4f46e5; font-weight: 600; text-decoration: none; font-size: 12px; }',
       '#' + GUIDE_ID + ' .monno-guide-back:hover { text-decoration: underline; }',
@@ -425,13 +426,20 @@
 
   function chainsHtml() {
     var picked = selectedChains();
+    var every = picked.length === 3; // no selection recorded: show everything
     var order = ['evm', 'bitcoin', 'tron'];
-    return '<ul class="monno-guide-chains">' + order.map(function (key) {
+    var items = order.map(function (key) {
       var isPick = picked.indexOf(key) !== -1;
       return '<li class="' + (isPick ? 'is-pick' : '') + '">' +
         (isPick ? '\u2022 ' : '\u00b7 ') + CHAIN_LABELS[key] +
         '</li>';
-    }).join('') + '</ul>';
+    }).join('');
+    // Never imply all three are required: it is the organizer's choice, and one
+    // configured network is a working setup.
+    var note = every
+      ? '<p class="monno-guide-chains-note">Set up only the ones you accept \u2014 you can add more later.</p>'
+      : '';
+    return '<ul class="monno-guide-chains">' + items + '</ul>' + note;
   }
 
   function stepsHtml() {
