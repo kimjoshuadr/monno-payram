@@ -61,38 +61,36 @@
 
   var DEFAULT_BACK = 'https://app.monno.io';
 
-  // Route -> step. These two paths are the whole setup; both are already part
-  // of our contract with the vendor (sso.html redirects to the first).
+  // There is ONE step, because the vendor only has one.
   //
-  // `routeMatches` exists because the console spends the same URL on two
-  // different states: before a wallet exists, /manageWallet/deposit-wallet is
-  // the "Set Up Deposit Wallet" landing page; once a wallet exists it becomes
-  // the wallet *list*. Step one is only current on the landing page — matching
-  // the route alone told organizers to do something they had already done.
+  // PayRam's deposit-wallet wizard is "Deploy contract - 2 of 2: Set up Cold
+  // Wallet": creating a deposit wallet *requires* the cold wallet your funds
+  // sweep to, and refuses to deploy without it ("Mandatory: The Cold Wallet
+  // must be different from the Master Wallet"). So a second step called "add
+  // your payout wallet" was asking for something the first step already forces,
+  // and because nothing could ever mark it done the guide sat at 1/2 forever.
+  //
+  // The step is per *network*: each chain you accept needs its own deposit
+  // contract and its own sweep destination.
   var STEPS = [
     {
       id: 'deposit',
-      title: 'Create your deposit wallet',
+      title: 'Set up your deposit wallet',
       path: '/manageWallet/deposit-wallet',
-      body: 'This is the on-chain account that receives each buyer\u2019s payment. Pick the option that matches the coins you enabled in Monno.',
-      doneHint: 'Done \u2014 this page is your deposit wallets list now.',
+      body: 'The wizard deploys the on-chain account that receives each buyer\u2019s payment, and asks for the cold wallet your sales sweep to \u2014 you set both in the same flow. Do it for each network you accept.',
+      doneHint: 'The contracts already deployed are listed here. If a network is still unconfigured, set it up the same way.',
       routeMatches: function () {
-        if (location.pathname.indexOf('/manageWallet/deposit-wallet') === -1) return false;
-        // The vendor's create prompt is what makes this page the setup step.
-        return /Set Up Deposit Wallet/i.test(document.body ? document.body.innerText : '');
-      }
-    },
-    {
-      id: 'cold',
-      title: 'Add your payout wallet',
-      path: '/manageWallet/wallets/cold',
-      body: 'Your sales sweep straight to this address on-chain. Add the cold wallet you control \u2014 Monno never holds your keys.',
-      doneHint: 'Set the cold wallet your sales sweep to. Confirm it under Wallet management.',
-      routeMatches: function () {
-        return location.pathname.indexOf('/manageWallet/wallets/cold') !== -1;
+        // /manageWallet/deposit-wallet is the create prompt before a wallet
+        // exists and the wallet list afterwards; both are "the deposit wallet
+        // step" now that there is only one.
+        return location.pathname.indexOf('/manageWallet/deposit-wallet') !== -1;
       }
     }
   ];
+
+  // Kept as a link, not a step: where you change a payout address later, or
+  // configure a chain that was not deployed through the wizard.
+  var COLD_WALLET_PATH = '/manageWallet/wallets/cold';
 
   var CHAIN_LABELS = {
     evm: 'EVM smart-contract wallet \u2014 Ethereum, Base, Polygon',
@@ -223,19 +221,27 @@
    * Setup guide
    * ------------------------------------------------------------------ */
 
+  function emptyDone() {
+    var out = {};
+    STEPS.forEach(function (step) { out[step.id] = false; });
+    return out;
+  }
+
   function readState() {
     try {
       var raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}') || {};
       var done = raw.done || {};
+      var normalised = emptyDone();
+      STEPS.forEach(function (step) { normalised[step.id] = !!done[step.id]; });
       return {
-        done: {deposit: !!done.deposit, cold: !!done.cold},
+        done: normalised,
         // `null` until the organizer touches it, so the viewport picks the
         // default: docked open on desktop, collapsed to a pill on phones where
         // a full-width sheet would sit over the page's own "Set Up" button.
         open: typeof raw.open === 'boolean' ? raw.open : null
       };
     } catch (e) {
-      return {done: {deposit: false, cold: false}, open: null};
+      return {done: emptyDone(), open: null};
     }
   }
 
@@ -395,6 +401,8 @@
       '#' + GUIDE_ID + ' .monno-guide-step-body { margin: 2px 0 0; color: #64748b; font-size: 12px; }',
       '#' + GUIDE_ID + ' .monno-guide-next { margin: 0; padding: 8px 16px 0; color: #4f46e5; font-size: 11.5px; font-weight: 600; }',
       '#' + GUIDE_ID + ' .monno-guide-done { margin: 2px 0 0; color: #10b981; font-size: 11.5px; font-weight: 600; }',
+      '#' + GUIDE_ID + ' .monno-guide-cold { margin: 0; padding: 6px 14px 10px; font-size: 11.5px; }',
+      '#' + GUIDE_ID + ' .monno-guide-cold a { color: #64748b; }',
       '#' + GUIDE_ID + ' .monno-guide-chains { margin: 6px 0 0; padding: 0; list-style: none; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li { font-size: 11.5px; color: #64748b; margin-top: 2px; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li.is-pick { color: #4f46e5; font-weight: 600; }',
@@ -448,7 +456,7 @@
     return [
       '<div class="monno-guide-head">',
       '  <span class="monno-guide-title">Crypto setup</span>',
-      '  <span class="monno-guide-progress" data-monno="progress">0 of 2 done</span>',
+      '  <span class="monno-guide-progress" data-monno="progress">0 of ' + STEPS.length + ' done</span>',
       '</div>',
       '<ol class="monno-guide-steps">',
       stepsHtml(),
@@ -458,7 +466,9 @@
       '<div class="monno-guide-foot">',
       '  <a class="monno-guide-back" data-monno="back" href="' + backUrl() + '">Back to Monno settings</a>',
       '  <button type="button" class="monno-guide-hide" data-monno="hide">Hide guide</button>',
-      '</div>'
+      '</div>',
+      // Not a step: where you change a payout address afterwards.
+      '<p class="monno-guide-cold" data-monno="cold-link" hidden></p>'
     ].join('\n');
   }
 
@@ -478,7 +488,8 @@
 
     if (action === 'toggle') {
       var stepId = target.getAttribute('data-step');
-      if (stepId !== 'deposit' && stepId !== 'cold') return;
+      var known = STEPS.some(function (step) { return step.id === stepId; });
+      if (!known) return;
       var state = readState();
       state.done[stepId] = !state.done[stepId];
       writeState(state);
@@ -545,7 +556,10 @@
     var pill = document.getElementById(PILL_ID);
 
     // Fold in the one fact the page itself proves.
-    var effectiveDone = { deposit: state.done.deposit || depositWalletExists(), cold: state.done.cold };
+    var effectiveDone = emptyDone();
+    STEPS.forEach(function (step) { effectiveDone[step.id] = state.done[step.id]; });
+    // The one fact the page itself proves: a deployed contract exists.
+    if (depositWalletExists()) effectiveDone.deposit = true;
 
     var doneCount = 0;
     STEPS.forEach(function (step) { if (effectiveDone[step.id]) doneCount++; });
@@ -554,7 +568,7 @@
     // The pill is the way back: keep it whenever the card isn't showing, so the
     // guide can never vanish silently behind a dialog.
     pill.hidden = open;
-    pill.textContent = 'Crypto setup \u00b7 ' + doneCount + '/2';
+    pill.textContent = 'Crypto setup \u00b7 ' + doneCount + '/' + STEPS.length;
 
     if (!open) return;
 
@@ -579,7 +593,7 @@
     });
 
     var progress = card.querySelector('[data-monno="progress"]');
-    if (progress) progress.textContent = doneCount + ' of 2 done';
+    if (progress) progress.textContent = doneCount + ' of ' + STEPS.length + ' done';
 
     // Always answer "what now?" — the next thing still to do, or that there is
     // nothing left and the wallet is simply waiting on the gateway to confirm.
@@ -587,12 +601,24 @@
     if (next) {
       var remaining = nextOpenStep(effectiveDone);
       next.hidden = false;
-      var detectedDeposit = effectiveDone.deposit && !state.done.deposit;
-      next.textContent = remaining
-        ? (detectedDeposit && remaining.id === 'cold'
-          ? 'Deposit wallet detected \u2014 next: ' + remaining.title
-          : 'Next: ' + remaining.title)
-        : 'Both done \u2014 waiting for PayRam to confirm your payout wallet. Check the status in Monno.';
+      var detected = effectiveDone.deposit && !state.done.deposit;
+      if (remaining) {
+        next.textContent = detected
+          ? 'Setup detected on this page \u2014 tick it, or carry on if every network is done.'
+          : 'Next: ' + remaining.title;
+      } else {
+        // With the cold wallet folded in, "done" means the wizard is finished.
+        // Whether money can actually move is PayRam's call, reported in Monno.
+        next.textContent = 'Setup done \u2014 Monno will show \u201Cready\u201D once PayRam confirms your payout wallet.';
+      }
+    }
+
+    // Always offer the payout-address page, but describe it for what it is.
+    var coldLink = card.querySelector('[data-monno="cold-link"]');
+    if (coldLink) {
+      coldLink.hidden = false;
+      coldLink.innerHTML = 'Need to change your payout address later? '
+        + '<a href="' + COLD_WALLET_PATH + '">Manage cold wallets</a>';
     }
 
     var back = card.querySelector('[data-monno="back"]');
