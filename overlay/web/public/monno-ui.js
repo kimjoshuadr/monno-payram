@@ -49,20 +49,34 @@
 
   // Route -> step. These two paths are the whole setup; both are already part
   // of our contract with the vendor (sso.html redirects to the first).
+  //
+  // `routeMatches` exists because the console spends the same URL on two
+  // different states: before a wallet exists, /manageWallet/deposit-wallet is
+  // the "Set Up Deposit Wallet" landing page; once a wallet exists it becomes
+  // the wallet *list*. Step one is only current on the landing page — matching
+  // the route alone told organizers to do something they had already done.
   var STEPS = [
     {
       id: 'deposit',
       title: 'Create your deposit wallet',
       path: '/manageWallet/deposit-wallet',
       body: 'This is the on-chain account that receives each buyer\u2019s payment. Pick the option that matches the coins you enabled in Monno.',
-      cta: 'Open deposit wallet'
+      doneHint: 'Done \u2014 this page is your deposit wallets list now.',
+      routeMatches: function () {
+        if (location.pathname.indexOf('/manageWallet/deposit-wallet') === -1) return false;
+        // The vendor's create prompt is what makes this page the setup step.
+        return /Set Up Deposit Wallet/i.test(document.body ? document.body.innerText : '');
+      }
     },
     {
       id: 'cold',
       title: 'Add your payout wallet',
       path: '/manageWallet/wallets/cold',
       body: 'Your sales sweep straight to this address on-chain. Add the cold wallet you control \u2014 Monno never holds your keys.',
-      cta: 'Open payout wallet'
+      doneHint: 'Set the cold wallet your sales sweep to. Confirm it under Wallet management.',
+      routeMatches: function () {
+        return location.pathname.indexOf('/manageWallet/wallets/cold') !== -1;
+      }
     }
   ];
 
@@ -231,10 +245,30 @@
     }
   }
 
+  // The console spends /manageWallet/deposit-wallet on two states: before a
+  // wallet exists it is the "Set Up Deposit Wallet" landing page, and after it
+  // is the wallet list. That transition is one place we can honestly infer
+  // progress, so use it: if the page shows wallets rather than the create
+  // prompt, step one is done.
+  function depositWalletExists() {
+    if (location.pathname.indexOf('/manageWallet/deposit-wallet') === -1) return false;
+    var body = document.body ? document.body.innerText || '' : '';
+    if (/Set Up Deposit Wallet/i.test(body)) return false;
+    return /Deposit Wallet\s*\d+/i.test(body) || /ready to accept payments/i.test(body) || /\/\s*ready\b/i.test(body);
+  }
+
   function currentStepId() {
-    var path = location.pathname;
     for (var i = 0; i < STEPS.length; i++) {
-      if (path.indexOf(STEPS[i].path) !== -1) return STEPS[i].id;
+      if (STEPS[i].routeMatches()) return STEPS[i].id;
+    }
+    return null;
+  }
+
+  // The step the organizer still has to do, so the card can say "what now"
+  // instead of only showing where they have been.
+  function nextOpenStep(done) {
+    for (var i = 0; i < STEPS.length; i++) {
+      if (!done[STEPS[i].id]) return STEPS[i];
     }
     return null;
   }
@@ -307,6 +341,8 @@
       '#' + GUIDE_ID + ' .monno-guide-step-title { font-weight: 600; color: #1e293b; text-decoration: none; }',
       '#' + GUIDE_ID + ' .monno-guide-step-title:hover { color: #4f46e5; }',
       '#' + GUIDE_ID + ' .monno-guide-step-body { margin: 2px 0 0; color: #64748b; font-size: 12px; }',
+      '#' + GUIDE_ID + ' .monno-guide-next { margin: 0; padding: 8px 16px 0; color: #4f46e5; font-size: 11.5px; font-weight: 600; }',
+      '#' + GUIDE_ID + ' .monno-guide-done { margin: 2px 0 0; color: #10b981; font-size: 11.5px; font-weight: 600; }',
       '#' + GUIDE_ID + ' .monno-guide-chains { margin: 6px 0 0; padding: 0; list-style: none; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li { font-size: 11.5px; color: #64748b; margin-top: 2px; }',
       '#' + GUIDE_ID + ' .monno-guide-chains li.is-pick { color: #4f46e5; font-weight: 600; }',
@@ -349,6 +385,7 @@
         '    <a class="monno-guide-step-title" href="' + step.path + '">' + step.title + '</a>',
         '    <p class="monno-guide-step-body">' + step.body + '</p>',
         (step.id === 'deposit' ? chainsHtml() : ''),
+        '    <p class="monno-guide-done" data-monno="done-hint" hidden>' + (step.doneHint || '') + '</p>',
         '  </div>',
         '</li>'
       ].join('\n');
@@ -364,6 +401,8 @@
       '<ol class="monno-guide-steps">',
       stepsHtml(),
       '</ol>',
+      // "What now" — the card has to answer this, not just tick boxes.
+      '<p class="monno-guide-next" data-monno="next" hidden></p>',
       '<div class="monno-guide-foot">',
       '  <a class="monno-guide-back" data-monno="back" href="' + backUrl() + '">Back to Monno settings</a>',
       '  <button type="button" class="monno-guide-hide" data-monno="hide">Hide guide</button>',
@@ -453,8 +492,11 @@
     var card = document.getElementById(GUIDE_ID);
     var pill = document.getElementById(PILL_ID);
 
+    // Fold in the one fact the page itself proves.
+    var effectiveDone = { deposit: state.done.deposit || depositWalletExists(), cold: state.done.cold };
+
     var doneCount = 0;
-    STEPS.forEach(function (step) { if (state.done[step.id]) doneCount++; });
+    STEPS.forEach(function (step) { if (effectiveDone[step.id]) doneCount++; });
 
     card.hidden = !open;
     // The pill is the way back: keep it whenever the card isn't showing, so the
@@ -467,15 +509,30 @@
     STEPS.forEach(function (step) {
       var li = card.querySelector('[data-monno-step="' + step.id + '"]');
       if (!li) return;
-      var isDone = state.done[step.id];
+      var isDone = effectiveDone[step.id];
       li.classList.toggle('is-done', isDone);
       li.classList.toggle('is-current', step.id === active && !isDone);
       var check = li.querySelector('[data-monno="toggle"]');
       if (check) check.setAttribute('aria-pressed', isDone ? 'true' : 'false');
+      // A step you are standing on but have already done should say so, rather
+      // than keep asking you to do it.
+      var hint = li.querySelector('[data-monno="done-hint"]');
+      if (hint) hint.hidden = !isDone;
     });
 
     var progress = card.querySelector('[data-monno="progress"]');
     if (progress) progress.textContent = doneCount + ' of 2 done';
+
+    // Always answer "what now?" — the next thing still to do, or that there is
+    // nothing left and the wallet is simply waiting on the gateway to confirm.
+    var next = card.querySelector('[data-monno="next"]');
+    if (next) {
+      var remaining = nextOpenStep(effectiveDone);
+      next.hidden = false;
+      next.textContent = remaining
+        ? 'Next: ' + remaining.title
+        : 'Both done \u2014 waiting for PayRam to confirm your payout wallet. Check the status in Monno.';
+    }
 
     var back = card.querySelector('[data-monno="back"]');
     if (back) back.setAttribute('href', backUrl());
