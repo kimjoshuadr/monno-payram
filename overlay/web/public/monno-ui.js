@@ -4,36 +4,31 @@
  * Loaded into every dashboard page by the nginx sub_filter in
  * scripts/patch-nginx.mjs. It has two jobs:
  *
- *   1. Gate the nav — the operator keeps the full console; an organizer (who
- *      only ever comes here to register a payout wallet) is shown the
- *      essentials instead of the whole merchant surface.
- *   2. Guide the wallet setup — a small docked stepper on /manageWallet pages
- *      so the organizer knows the two things they must do, and can get back.
+ *   1. Keep the organizer to the surface that is theirs. The vendor already
+ *      filters nav by permission, but the roles are fixed and the only role that
+ *      fits the organizer's job carries operator-only items (fees, growth,
+ *      onramp, developer settings, hot wallets). Those pages 403 in the
+ *      background and lead nowhere, so we hide the rows rather than let the
+ *      organizer wander into them.
+ *   2. Show a single header banner while their deposit wallet still needs
+ *      setting up, then get out of the way.
  *
- * Why the gate exists: the vendor already filters nav items by permission, but
- * the roles are fixed and the organizer genuinely needs `write_wallet`, so the
- * only role that fits also carries growth/onramp/developer items. There is no
- * narrower role to assign and no API to create one.
+ * Why the banner reads the gateway, not the page: the old stepper counted its
+ * own localStorage ticks and guessed progress from the DOM, so navigating
+ * between tabs reset it to "0 of 1" and it could claim setup was missing when it
+ * was done. The gateway is the only thing that actually knows whether a deposit
+ * wallet with a payout address exists, so the banner asks it.
  *
- * The guide keys on ROUTES, never on the vendor's button or heading copy.
- * PayRam ships often; the routes are the stable contract (sso.html's `redirect`
- * already depends on /manageWallet/deposit-wallet), whereas labels move between
- * releases. Anything pinned to a label would silently rot.
- *
- * The guide also does not claim to know on-chain state. Whether a payout wallet
- * is really attached is Monno's to report (organizer settings); here we only
- * show position and the organizer's own ticks. Adding DOM-based "detection"
- * would guess wrong on a page we don't own.
+ * The banner keys on ROUTES, never on the vendor's button or heading copy —
+ * labels move between releases, routes are the stable contract.
  */
 (function () {
-  // The console shows organizers items their role cannot actually use: those
-  // pages 403 in the background (which surfaces as a red "permission" toast) and
-  // they lead nowhere. Hiding the rows is the vendor's own permission model
-  // applied one level up, and it is why the guide bothers to gate the nav at all.
+  // The console shows organizers items their role cannot actually use. Hiding
+  // them is the vendor's own permission model applied one level up.
   //
   // Entries render as class-styled <li>/<div> rows, so match on the label text
   // of a clickable-looking row rather than on a tag name.
-  var HIDE_FOR_ORGANIZERS = [
+  var HIDE_NAV = [
     'Operator',
     'Fees',
     'Onramp',
@@ -41,68 +36,42 @@
     'Funds Consolidation',
     'Developers',
     'Analytics',
-    'Withdraw'
+    'Withdraw',
+    'Projects',
+    'Hot wallet',
+    'Hot Wallet',
+    'Hot wallets',
+    'Hot Wallets'
   ];
 
-  var STYLE_ID = 'monno-nav-gate';
-  var GUIDE_ID = 'monno-setup-guide';
-  var PILL_ID = 'monno-setup-pill';
+  // Actions on ordinary pages that are not the organizer's to take. Matched
+  // against the text of clickable elements; kept narrow so nothing they need
+  // (deposit wallet setup) is caught.
+  var HIDE_ACTIONS = [
+    'Assign projects to accept payments',
+    'Add Hot Wallet',
+    'Set Up Hot Wallet',
+    'Create Project',
+    'Create a project',
+    'New Project',
+    'Add project'
+  ];
+
+  var STYLE_ID = 'monno-ui-style';
+  var BANNER_ID = 'monno-setup-banner';
+  var BANNER_DISMISS_KEY = 'monno_setup_banner_dismissed';
+
   // A version marker so a stale copy is never mistaken for a broken fix: the
   // overlay is served from a fixed URL with no cache-busting, and a long-lived
   // tab will happily keep running an old one.
-  var MONNO_UI_VERSION = '2026-10-03.1';
+  var MONNO_UI_VERSION = '2026-10-04.1';
   try { window.__monnoUiVersion = MONNO_UI_VERSION; } catch (e) {}
 
-  var STATE_KEY = 'monno_setup_guide';
-  var COINS_KEY = 'monno_setup_coins';
-  var BACK_KEY = 'monno_setup_back';
-  var WALLET_KEY = 'monno_setup_wallet';
   var ORGANIZER_KEY = 'monno_setup_organizer';
-
-  var DEFAULT_BACK = 'https://app.monno.io';
-
-  // There is ONE step, because the vendor only has one.
-  //
-  // PayRam's deposit-wallet wizard is "Deploy contract - 2 of 2: Set up Cold
-  // Wallet": creating a deposit wallet *requires* the cold wallet your funds
-  // sweep to, and refuses to deploy without it ("Mandatory: The Cold Wallet
-  // must be different from the Master Wallet"). So a second step called "add
-  // your payout wallet" was asking for something the first step already forces,
-  // and because nothing could ever mark it done the guide sat at 1/2 forever.
-  //
-  // The step is per *network*: each chain you accept needs its own deposit
-  // contract and its own sweep destination.
-  var STEPS = [
-    {
-      id: 'deposit',
-      title: 'Set up your deposit wallet',
-      path: '/manageWallet/deposit-wallet',
-      body: 'The wizard deploys the on-chain account that receives each buyer\u2019s payment, and asks for the cold wallet your sales sweep to \u2014 both in the same flow. You only need the networks you actually accept; one is enough to start.',
-      doneHint: 'The contracts already deployed are listed here. If a network is still unconfigured, set it up the same way.',
-      routeMatches: function () {
-        // /manageWallet/deposit-wallet is the create prompt before a wallet
-        // exists and the wallet list afterwards; both are "the deposit wallet
-        // step" now that there is only one.
-        return location.pathname.indexOf('/manageWallet/deposit-wallet') !== -1;
-      }
-    }
-  ];
-
-  // Kept as a link, not a step: where you change a payout address later, or
-  // configure a chain that was not deployed through the wizard.
-  var COLD_WALLET_PATH = '/manageWallet/wallets/cold';
-
-  var CHAIN_LABELS = {
-    evm: 'EVM smart-contract wallet \u2014 Ethereum, Base, Polygon',
-    bitcoin: 'Bitcoin wallet \u2014 for BTC payouts',
-    tron: 'Tron bridge \u2014 for USDT (TRC-20)'
-  };
-
-  var EVM_COINS = ['ETH', 'USDC', 'USDT', 'POL', 'BASE_ETH', 'BASE_USDC', 'MATIC'];
-  var TRON_COINS = ['TRX', 'TRON_USDT', 'TRON', 'TRC20_USDT'];
+  var DEPOSIT_WALLET_PATH = '/manageWallet/deposit-wallet';
 
   /* ------------------------------------------------------------------ *
-   * Nav gate
+   * Who is this?
    * ------------------------------------------------------------------ */
 
   function roleName() {
@@ -110,23 +79,16 @@
       var user = JSON.parse(localStorage.getItem('payram_user') || '{}') || {};
       var role = user.role;
       if (!role) return null;
-      // The console stores the role as an object; tolerate a plain string too,
-      // so a shape change on their side doesn't hide the guide.
       return typeof role === 'string' ? role : (role.name || null);
     } catch (e) {
       return null;
     }
   }
 
-  // Everything here is for the organizer. The operator (and a signed-out
-  // visitor) should see the console exactly as the vendor shipped it.
   function hasSession() {
     try { return !!localStorage.getItem('payram_user'); } catch (e) { return false; }
   }
 
-  // Monno minted this session from an organizer's SSO link, so we treat them as
-  // the organizer even if the console reshapes `payram_user` while booting and
-  // the role we read there goes missing. A real operator session always wins.
   function monnoMinted() {
     try { return localStorage.getItem(ORGANIZER_KEY) === '1'; } catch (e) { return false; }
   }
@@ -138,66 +100,39 @@
     return !!role;
   }
 
+  function isBuyerArea() {
+    var path = location.pathname;
+    return path.indexOf('/payments') === 0 || path.indexOf('/payment/') === 0;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Nav / action hiding
+   * ------------------------------------------------------------------ */
+
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
     var style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = '[data-monno-hidden]{display:none !important;}';
+    style.textContent =
+      '[data-monno-hidden]{display:none !important;}' +
+      '#' + BANNER_ID + '{box-sizing:border-box;width:100%;display:flex;align-items:center;gap:12px;' +
+      'padding:11px 16px;background:#4f46e5;color:#fff;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;' +
+      'font-size:13px;line-height:1.4;}' +
+      '#' + BANNER_ID + ' .monno-banner-msg{flex:1;}' +
+      '#' + BANNER_ID + ' a.monno-banner-link{color:#fff;font-weight:700;text-decoration:underline;white-space:nowrap;}' +
+      '#' + BANNER_ID + ' button.monno-banner-hide{background:transparent;border:1px solid rgba(255,255,255,.55);' +
+      'color:#fff;border-radius:99px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap;}' +
+      '#' + BANNER_ID + ' button.monno-banner-hide:hover{border-color:#fff;}';
     document.head.appendChild(style);
   }
 
-  // The console shows a red "You don't have permission for some request" toast
-  // whenever any background call 403s. An organizer's session triggers these
-  // routinely (operator-only endpoints load anyway), and the toast is noise
-  // about a request they never made — not something they can act on.
-  //
-  // The toast library is Toastify: it renders a <section class="Toastify"> with
-  // the message in a descendant, and it is not exposed via role=status, so
-  // matching ARIA roles alone missed every one of them.
-  function isPermissionToast(el) {
-    var text = (el.textContent || '');
-    return text.indexOf('permission for some request') !== -1
-      || text.indexOf('not authorized') !== -1;
-  }
-
-  function suppressPermissionToast() {
-    if (!isOrganizer()) return;
-
-    // Toastify's container lives outside the app tree; hide the whole stack
-    // rather than trying to hide individual toasts mid-animation.
-    var stacks = document.querySelectorAll('.Toastify__toast-container, .Toastify__toast, .Toastify');
-    for (var i = 0; i < stacks.length; i++) {
-      if (isPermissionToast(stacks[i])) {
-        stacks[i].style.display = 'none';
-      }
-    }
-
-    // Fall back to the generic containers for any non-Toastify surface.
-    var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
-    for (var j = 0; j < toasts.length; j++) {
-      var el = toasts[j];
-      if (!isPermissionToast(el)) continue;
-      var container = el.closest('[role="status"]') || el.closest('[role="alert"]') || el;
-      container.style.display = 'none';
-    }
-  }
-
-  function apply() {
-    // No session yet, or an operator/admin: leave the console alone.
-    if (!hasSession() || !isOrganizer()) return;
-
-    ensureStyle();
-    suppressPermissionToast();
-
+  function hideNav() {
     var nav = document.querySelector('nav') || document.querySelector('aside');
     if (!nav) return;
 
-    // The console renders nav entries as class-styled <li>/<div> rows, not as
-    // links or buttons — matching only those found nothing and left every
-    // operator item visible to organizers. Match the row itself instead: the
-    // smallest element whose own text is exactly the label.
     var wanted = {};
-    HIDE_FOR_ORGANIZERS.forEach(function (label) { wanted[label.toLowerCase()] = true; });
+    HIDE_NAV.forEach(function (label) { wanted[label.toLowerCase()] = true; });
 
     var candidates = document.querySelectorAll('li, a, button, [role="button"], [role="menuitem"]');
     for (var i = 0; i < candidates.length; i++) {
@@ -210,449 +145,189 @@
 
       // If any descendant links somewhere else, this is a container (e.g. a
       // collapsible group) — skip it rather than hiding its children.
-      var nested = el.querySelector('a, button, [role="button"]');
-      if (nested) continue;
+      if (el.querySelector('a, button, [role="button"]')) continue;
 
       el.setAttribute('data-monno-hidden', '1');
     }
   }
 
+  function hideActions() {
+    var candidates = document.querySelectorAll('a, button, [role="button"], [data-testid]');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (el.hasAttribute('data-monno-hidden')) continue;
+      if (el.closest('#' + BANNER_ID)) continue;
+
+      var text = (el.textContent || '').trim();
+      if (!text) continue;
+
+      for (var j = 0; j < HIDE_ACTIONS.length; j++) {
+        if (text.indexOf(HIDE_ACTIONS[j]) !== -1) {
+          el.setAttribute('data-monno-hidden', '1');
+          break;
+        }
+      }
+    }
+  }
+
+  // The console shows a red "You don't have permission for some request" toast
+  // whenever a background call 403s — routine for an organizer's session, and
+  // noise about a request they never made.
+  function isPermissionToast(el) {
+    var text = (el.textContent || '');
+    return text.indexOf('permission for some request') !== -1
+      || text.indexOf('not authorized') !== -1;
+  }
+
+  function suppressPermissionToast() {
+    var stacks = document.querySelectorAll('.Toastify__toast-container, .Toastify__toast, .Toastify');
+    for (var i = 0; i < stacks.length; i++) {
+      if (isPermissionToast(stacks[i])) stacks[i].style.display = 'none';
+    }
+    var toasts = document.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
+    for (var j = 0; j < toasts.length; j++) {
+      var el = toasts[j];
+      if (!isPermissionToast(el)) continue;
+      var container = el.closest('[role="status"]') || el.closest('[role="alert"]') || el;
+      container.style.display = 'none';
+    }
+  }
+
   /* ------------------------------------------------------------------ *
-   * Setup guide
+   * Setup state — ask the gateway, never the DOM
    * ------------------------------------------------------------------ */
 
-  function emptyDone() {
-    var out = {};
-    STEPS.forEach(function (step) { out[step.id] = false; });
-    return out;
+  function accessToken() {
+    try { return localStorage.getItem('payram_access_token'); } catch (e) { return null; }
   }
 
-  function readState() {
-    try {
-      var raw = JSON.parse(localStorage.getItem(STATE_KEY) || '{}') || {};
-      var done = raw.done || {};
-      var normalised = emptyDone();
-      STEPS.forEach(function (step) { normalised[step.id] = !!done[step.id]; });
-      return {
-        done: normalised,
-        // `null` until the organizer touches it, so the viewport picks the
-        // default: docked open on desktop, collapsed to a pill on phones where
-        // a full-width sheet would sit over the page's own "Set Up" button.
-        open: typeof raw.open === 'boolean' ? raw.open : null
-      };
-    } catch (e) {
-      return {done: emptyDone(), open: null};
-    }
-  }
-
-  function writeState(state) {
-    try {
-      localStorage.setItem(STATE_KEY, JSON.stringify(state));
-    } catch (e) { /* storage blocked — the guide simply won't remember */ }
-  }
-
-  function selectedChains() {
-    var coins = [];
-    try {
-      coins = JSON.parse(localStorage.getItem(COINS_KEY) || '[]') || [];
-    } catch (e) { coins = []; }
-
-    // No selection recorded (older link, or the platform hasn't been deployed
-    // yet): show every chain rather than guessing one.
-    if (!coins.length) return ['evm', 'bitcoin', 'tron'];
-
-    var picked = {evm: false, bitcoin: false, tron: false};
-    coins.forEach(function (coin) {
-      var code = String(coin).toUpperCase();
-      if (EVM_COINS.indexOf(code) !== -1) picked.evm = true;
-      else if (code === 'BTC') picked.bitcoin = true;
-      else if (TRON_COINS.indexOf(code) !== -1) picked.tron = true;
+  function apiGet(path) {
+    var token = accessToken();
+    if (!token) return Promise.reject(new Error('no token'));
+    return fetch(location.origin + path, {
+      headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+    }).then(function (response) {
+      if (!response.ok) throw new Error('http ' + response.status);
+      return response.json();
     });
-
-    var out = Object.keys(picked).filter(function (key) { return picked[key]; });
-    return out.length ? out : ['evm'];
   }
 
-  function backUrl() {
-    var fallback = DEFAULT_BACK;
-    try {
-      var stored = localStorage.getItem(BACK_KEY);
-      if (!stored) return fallback;
-      var url = new URL(stored);
-      var trusted = url.protocol === 'https:' &&
-        (/(^|\.)monno\.io$/.test(url.hostname) || url.hostname === 'localhost');
-      return trusted ? url.toString() : fallback;
-    } catch (e) {
-      return fallback;
-    }
+  function listOf(body) {
+    if (Array.isArray(body)) return body;
+    if (body && Array.isArray(body.data)) return body.data;
+    return [];
   }
 
-  // The console spends /manageWallet/deposit-wallet on two states: before a
-  // wallet exists it is the "Set Up Deposit Wallet" landing page, and after it
-  // is the wallet list. That transition is one place we can honestly infer
-  // progress, so use it.
-  //
-  // Read the vendor's own content, never document.body — our card lives in the
-  // body too, so its own words ("Create your deposit wallet") would otherwise
-  // count as the console's and the check could never pass. The console does not
-  // use <main>, so subtract our two nodes from the body instead.
-  function vendorText() {
-    var clone = document.body.cloneNode(true);
-    [GUIDE_ID, PILL_ID].forEach(function (id) {
-      var el = clone.querySelector('#' + id);
-      if (el) el.remove();
-    });
-    return clone.innerText || '';
-  }
-
-  function depositWalletExists() {
-    if (location.pathname.indexOf('/manageWallet/deposit-wallet') === -1) return false;
-    var text = vendorText();
-    // No console content yet (white screen): do not infer anything.
-    if (text === '') return false;
-    // A wallet row in the list is the proof. The "Set Up Deposit Wallet" button
-    // stays on the page even once wallets exist, so it cannot be the signal.
-    return /Deposit Wallet\s*\d+/i.test(text) || /ready to accept payments/i.test(text);
-  }
-
-  function currentStepId() {
-    for (var i = 0; i < STEPS.length; i++) {
-      if (STEPS[i].routeMatches()) return STEPS[i].id;
-    }
-    return null;
-  }
-
-  // The step the organizer still has to do, so the card can say "what now"
-  // instead of only showing where they have been.
-  function nextOpenStep(done) {
-    for (var i = 0; i < STEPS.length; i++) {
-      if (!done[STEPS[i].id]) return STEPS[i];
-    }
-    return null;
-  }
-
-  function isWalletArea() {
-    return location.pathname.indexOf('/manageWallet') !== -1;
-  }
-
-  // Pages that belong to the buyer, not the organizer. The checkout shows a
-  // payment reference and the merchant's name, and the organizer is often the
-  // one who opens it to test — which is how they ended up being shown their own
-  // setup guide over a buyer's payment options. Never guide here.
-  function isBuyerArea() {
-    var path = location.pathname;
-    return path.indexOf('/payments') === 0 || path.indexOf('/payment/') === 0;
-  }
-
-  // Monno tells us, through the one-time SSO link, when the organizer's payout
-  // wallet is still unconfirmed. While that holds, the guide follows them
-  // anywhere in the console: /manageWallet is where they set it up, but the
-  // console can land them elsewhere (the dashboard), and it must not vanish
-  // with the route.
-  function walletSetupPending() {
-    try { return localStorage.getItem(WALLET_KEY) === '1'; } catch (e) { return false; }
-  }
-
-  // Only a dialog that is actually on screen should push the guide aside. The
-  // console (and the wallet libraries it loads) can leave dialog nodes mounted
-  // after they close — a hidden portal child, say — and matching on presence
-  // alone would hide the guide for the rest of the session.
-  function isVisible(el) {
-    if (!el.getClientRects || el.getClientRects().length === 0) return false;
-    var style = window.getComputedStyle(el);
-    return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-  }
-
-  function dialogOpen() {
-    var dialogs = document.querySelectorAll(
-      '[role="dialog"], [aria-modal="true"], .adapter-modal-wrapper, [data-mantine-modal], .mantine-Modal-root'
-    );
-    for (var i = 0; i < dialogs.length; i++) {
-      if (isVisible(dialogs[i])) return true;
-    }
-    return false;
-  }
-
-  function isSmallScreen() {
-    // Matches the CSS breakpoint below. Below it a right-docked card crowds the
-    // page (and a full sheet would cover the page's own "Set Up" button), so we
-    // start collapsed to a pill instead.
-    return window.matchMedia('(max-width: 900px)').matches;
-  }
-
-  function isOpen(state) {
-    return state.open === null ? !isSmallScreen() : state.open;
-  }
-
-  function guideCss() {
-    return [
-      '#' + GUIDE_ID + ', #' + PILL_ID + ' * { box-sizing: border-box; }',
-      '#' + GUIDE_ID + ' {',
-      '  position: fixed; z-index: 2147483000; right: 20px; bottom: 20px; width: 340px;',
-      '  max-width: calc(100vw - 32px); background: #fff; color: #1e293b;',
-      '  border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden;',
-      '  box-shadow: 0 12px 32px rgba(15,23,42,.18);',
-      '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
-      '  font-size: 13px; line-height: 1.5; text-align: left;',
-      '}',
-      '#' + GUIDE_ID + '[hidden] { display: none !important; }',
-      '#' + GUIDE_ID + ' .monno-guide-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #eef2f7; }',
-      '#' + GUIDE_ID + ' .monno-guide-title { font-weight: 700; font-size: 13px; flex: 1; }',
-      '#' + GUIDE_ID + ' .monno-guide-progress { font-size: 11px; font-weight: 600; color: #4f46e5; background: rgba(99,102,241,.1); padding: 2px 8px; border-radius: 99px; white-space: nowrap; }',
-      '#' + GUIDE_ID + ' .monno-guide-steps { list-style: none; margin: 0; padding: 6px; }',
-      '#' + GUIDE_ID + ' .monno-guide-steps > li { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 10px; }',
-      '#' + GUIDE_ID + ' .monno-guide-steps > li.is-current { background: rgba(99,102,241,.07); }',
-      '#' + GUIDE_ID + ' .monno-guide-check { flex: 0 0 auto; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 2px solid #cbd5e1; background: #fff; color: transparent; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; }',
-      '#' + GUIDE_ID + ' li.is-done .monno-guide-check { background: #10b981; border-color: #10b981; color: #fff; }',
-      '#' + GUIDE_ID + ' li.is-current .monno-guide-check { border-color: #6366f1; }',
-      '#' + GUIDE_ID + ' .monno-guide-step-title { font-weight: 600; color: #1e293b; text-decoration: none; }',
-      '#' + GUIDE_ID + ' .monno-guide-step-title:hover { color: #4f46e5; }',
-      '#' + GUIDE_ID + ' .monno-guide-step-body { margin: 2px 0 0; color: #64748b; font-size: 12px; }',
-      '#' + GUIDE_ID + ' .monno-guide-next { margin: 0; padding: 8px 16px 0; color: #4f46e5; font-size: 11.5px; font-weight: 600; }',
-      '#' + GUIDE_ID + ' .monno-guide-done { margin: 2px 0 0; color: #10b981; font-size: 11.5px; font-weight: 600; }',
-      '#' + GUIDE_ID + ' .monno-guide-cold { margin: 0; padding: 6px 14px 10px; font-size: 11.5px; }',
-      '#' + GUIDE_ID + ' .monno-guide-cold a { color: #64748b; }',
-      '#' + GUIDE_ID + ' .monno-guide-chains { margin: 6px 0 0; padding: 0; list-style: none; }',
-      '#' + GUIDE_ID + ' .monno-guide-chains li { font-size: 11.5px; color: #64748b; margin-top: 2px; }',
-      '#' + GUIDE_ID + ' .monno-guide-chains li.is-pick { color: #4f46e5; font-weight: 600; }',
-      '#' + GUIDE_ID + ' .monno-guide-chains-note { margin: 4px 0 0; color: #94a3b8; font-size: 11px; font-style: italic; }',
-      '#' + GUIDE_ID + ' .monno-guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-top: 1px solid #eef2f7; background: #f8fafc; }',
-      '#' + GUIDE_ID + ' .monno-guide-back { color: #4f46e5; font-weight: 600; text-decoration: none; font-size: 12px; }',
-      '#' + GUIDE_ID + ' .monno-guide-back:hover { text-decoration: underline; }',
-      '#' + GUIDE_ID + ' .monno-guide-hide { border: 0; background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; }',
-      '#' + GUIDE_ID + ' .monno-guide-hide:hover { color: #475569; }',
-      '#' + PILL_ID + ' { position: fixed; z-index: 2147483000; right: 20px; bottom: 20px; background: #4f46e5; color: #fff; border: 0; border-radius: 99px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px rgba(79,70,229,.35); }',
-      '#' + PILL_ID + '[hidden] { display: none !important; }',
-      '@media (max-width: 900px) {',
-      '  #' + GUIDE_ID + ' { right: 0; left: 0; bottom: 0; width: auto; max-width: none; border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); max-height: 74vh; display: flex; flex-direction: column; }',
-      '  #' + GUIDE_ID + ' .monno-guide-steps { flex: 1 1 auto; overflow-y: auto; }',
-      '  #' + GUIDE_ID + ' .monno-guide-check { width: 26px; height: 26px; }',
-      '  #' + GUIDE_ID + ' .monno-guide-back, #' + GUIDE_ID + ' .monno-guide-hide { padding: 8px 4px; }',
-      '  #' + PILL_ID + ' { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }',
-      '}'
-    ].join('\n');
-  }
-
-  function chainsHtml() {
-    var picked = selectedChains();
-    var every = picked.length === 3; // no selection recorded: show everything
-    var order = ['evm', 'bitcoin', 'tron'];
-    var items = order.map(function (key) {
-      var isPick = picked.indexOf(key) !== -1;
-      return '<li class="' + (isPick ? 'is-pick' : '') + '">' +
-        (isPick ? '\u2022 ' : '\u00b7 ') + CHAIN_LABELS[key] +
-        '</li>';
-    }).join('');
-    // Never imply all three are required: it is the organizer's choice, and one
-    // configured network is a working setup.
-    var note = every
-      ? '<p class="monno-guide-chains-note">Set up only the ones you accept \u2014 you can add more later.</p>'
-      : '';
-    return '<ul class="monno-guide-chains">' + items + '</ul>' + note;
-  }
-
-  function stepsHtml() {
-    return STEPS.map(function (step) {
-      return [
-        '<li data-monno-step="' + step.id + '">',
-        '  <button type="button" class="monno-guide-check" data-monno="toggle"',
-        '          data-step="' + step.id + '" aria-pressed="false"',
-        '          aria-label="Mark &quot;' + step.title + '&quot; as done">\u2713</button>',
-        '  <div>',
-        '    <a class="monno-guide-step-title" href="' + step.path + '">' + step.title + '</a>',
-        '    <p class="monno-guide-step-body">' + step.body + '</p>',
-        (step.id === 'deposit' ? chainsHtml() : ''),
-        '    <p class="monno-guide-done" data-monno="done-hint" hidden>' + (step.doneHint || '') + '</p>',
-        '  </div>',
-        '</li>'
-      ].join('\n');
-    }).join('\n');
-  }
-
-  function shellHtml() {
-    return [
-      '<div class="monno-guide-head">',
-      '  <span class="monno-guide-title">Crypto setup</span>',
-      '  <span class="monno-guide-progress" data-monno="progress">0 of ' + STEPS.length + ' done</span>',
-      '</div>',
-      '<ol class="monno-guide-steps">',
-      stepsHtml(),
-      '</ol>',
-      // "What now" — the card has to answer this, not just tick boxes.
-      '<p class="monno-guide-next" data-monno="next" hidden></p>',
-      '<div class="monno-guide-foot">',
-      '  <a class="monno-guide-back" data-monno="back" href="' + backUrl() + '">Back to Monno settings</a>',
-      '  <button type="button" class="monno-guide-hide" data-monno="hide">Hide guide</button>',
-      '</div>',
-      // Not a step: where you change a payout address afterwards.
-      '<p class="monno-guide-cold" data-monno="cold-link" hidden></p>'
-    ].join('\n');
-  }
-
-  function onGuideClick(event) {
-    var target = event.target.closest('[data-monno]');
-    if (!target) return;
-
-    var action = target.getAttribute('data-monno');
-
-    if (action === 'hide') {
-      var hiddenState = readState();
-      hiddenState.open = false;
-      writeState(hiddenState);
-      updateGuide();
-      return;
-    }
-
-    if (action === 'toggle') {
-      var stepId = target.getAttribute('data-step');
-      var known = STEPS.some(function (step) { return step.id === stepId; });
-      if (!known) return;
-      var state = readState();
-      state.done[stepId] = !state.done[stepId];
-      writeState(state);
-      updateGuide();
-    }
-  }
-
-  function ensureGuide() {
-    if (!document.getElementById(STYLE_ID + '-guide')) {
-      var style = document.createElement('style');
-      style.id = STYLE_ID + '-guide';
-      style.textContent = guideCss();
-      document.head.appendChild(style);
-    }
-
-    var guide = document.getElementById(GUIDE_ID);
-    if (!guide) {
-      guide = document.createElement('div');
-      guide.id = GUIDE_ID;
-      guide.setAttribute('role', 'complementary');
-      guide.setAttribute('aria-label', 'Crypto payment setup guide');
-      guide.innerHTML = shellHtml();
-      guide.addEventListener('click', onGuideClick);
-      document.body.appendChild(guide);
-    }
-
-    if (!document.getElementById(PILL_ID)) {
-      var pill = document.createElement('button');
-      pill.id = PILL_ID;
-      pill.type = 'button';
-      pill.textContent = 'Crypto setup';
-      pill.addEventListener('click', function () {
-        var state = readState();
-        state.open = true;
-        writeState(state);
-        updateGuide();
+  // A project is "set up" when it has a deposit wallet whose sweep destination
+  // (the payout/cold wallet) is set. That is the same fact Monno reports as
+  // "ready", read from the same place.
+  function hasConfiguredDepositWallet(wallets) {
+    return listOf(wallets).some(function (wallet) {
+      if (!wallet || wallet.walletType !== 'deposit_wallet') return false;
+      var scws = wallet.walletScws || [];
+      return scws.some(function (scw) {
+        return scw && String(scw.fundCollectorAddress || '').trim() !== '';
       });
-      document.body.appendChild(pill);
+    });
+  }
+
+  var stateCache = null;      // {known, configured}
+  var stateFetchedAt = 0;
+  var STATE_TTL_MS = 30000;
+
+  function fetchSetupState() {
+    return apiGet('/api/v1/external-platform/all').then(function (projects) {
+      var project = listOf(projects)[0];
+      if (!project || !project.id) return { known: false };
+      return apiGet('/api/v1/project/' + project.id + '/wallets').then(function (wallets) {
+        return { known: true, configured: hasConfiguredDepositWallet(wallets) };
+      });
+    }).catch(function () {
+      // Unreachable or expired session: say nothing rather than nag wrongly.
+      return { known: false };
+    });
+  }
+
+  function getSetupState() {
+    var now = Date.now();
+    if (stateCache && (now - stateFetchedAt) < STATE_TTL_MS) {
+      return Promise.resolve(stateCache);
     }
+    return fetchSetupState().then(function (state) {
+      stateCache = state;
+      stateFetchedAt = Date.now();
+      return state;
+    });
   }
 
-  function removeGuide() {
-    var guide = document.getElementById(GUIDE_ID);
-    if (guide) guide.remove();
-    var pill = document.getElementById(PILL_ID);
-    if (pill) pill.remove();
+  /* ------------------------------------------------------------------ *
+   * Banner
+   * ------------------------------------------------------------------ */
+
+  function bannerDismissed() {
+    try { return sessionStorage.getItem(BANNER_DISMISS_KEY) === '1'; } catch (e) { return false; }
   }
 
-  function updateGuide() {
-    if (isBuyerArea() || (!isWalletArea() && !walletSetupPending()) || !hasSession() || !isOrganizer()) {
-      removeGuide();
+  function removeBanner() {
+    var el = document.getElementById(BANNER_ID);
+    if (el) el.remove();
+  }
+
+  function ensureBanner() {
+    var el = document.getElementById(BANNER_ID);
+    if (el) return el;
+
+    el = document.createElement('div');
+    el.id = BANNER_ID;
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<span class="monno-banner-msg">Finish crypto setup \u2014 set up your deposit wallet ' +
+      'so your sales can settle to your payout wallet.</span>' +
+      '<a class="monno-banner-link" href="' + DEPOSIT_WALLET_PATH + '">Set up deposit wallet</a>' +
+      '<button type="button" class="monno-banner-hide">Dismiss</button>';
+
+    el.querySelector('.monno-banner-hide').addEventListener('click', function () {
+      try { sessionStorage.setItem(BANNER_DISMISS_KEY, '1'); } catch (e) {}
+      removeBanner();
+    });
+
+    // In normal flow at the very top of the page, so the console just shifts
+    // down a little instead of being overlapped.
+    document.body.insertBefore(el, document.body.firstChild);
+    return el;
+  }
+
+  function updateBanner() {
+    if (isBuyerArea() || !hasSession() || !isOrganizer() || bannerDismissed()) {
+      removeBanner();
       return;
     }
 
-    ensureGuide();
-
-    var state = readState();
-    var active = currentStepId();
-    // Yield while a wallet-connect prompt or console modal is on screen — but
-    // if the organizer has explicitly opened the guide, their choice wins.
-    var suppressed = dialogOpen();
-    var open = isOpen(state) && (!suppressed || state.open === true);
-    var card = document.getElementById(GUIDE_ID);
-    var pill = document.getElementById(PILL_ID);
-
-    // Fold in the one fact the page itself proves.
-    var effectiveDone = emptyDone();
-    STEPS.forEach(function (step) { effectiveDone[step.id] = state.done[step.id]; });
-    // The one fact the page itself proves: a deployed contract exists.
-    if (depositWalletExists()) effectiveDone.deposit = true;
-
-    var doneCount = 0;
-    STEPS.forEach(function (step) { if (effectiveDone[step.id]) doneCount++; });
-
-    card.hidden = !open;
-    // The pill is the way back: keep it whenever the card isn't showing, so the
-    // guide can never vanish silently behind a dialog.
-    pill.hidden = open;
-    pill.textContent = 'Crypto setup \u00b7 ' + doneCount + '/' + STEPS.length;
-
-    if (!open) return;
-
-    STEPS.forEach(function (step) {
-      var li = card.querySelector('[data-monno-step="' + step.id + '"]');
-      if (!li) return;
-      var isDone = effectiveDone[step.id];
-      li.classList.toggle('is-done', isDone);
-      // A step we can see is already satisfied should read as satisfied, even
-      // if the organizer never ticked it.
-      var inferred = isDone && !state.done[step.id];
-      li.classList.toggle('is-current', step.id === active && !isDone);
-      var check = li.querySelector('[data-monno="toggle"]');
-      if (check) {
-        check.setAttribute('aria-pressed', isDone ? 'true' : 'false');
-        if (inferred) check.setAttribute('title', 'Detected on this page');
-      }
-      // A step you are standing on but have already done should say so, rather
-      // than keep asking you to do it.
-      var hint = li.querySelector('[data-monno="done-hint"]');
-      if (hint) hint.hidden = !isDone;
+    getSetupState().then(function (state) {
+      if (isBuyerArea() || bannerDismissed()) { removeBanner(); return; }
+      if (!state.known) { removeBanner(); return; }   // fail-safe: don't nag
+      if (state.configured) { removeBanner(); return; }
+      ensureBanner();
     });
-
-    var progress = card.querySelector('[data-monno="progress"]');
-    if (progress) progress.textContent = doneCount + ' of ' + STEPS.length + ' done';
-
-    // Always answer "what now?" — the next thing still to do, or that there is
-    // nothing left and the wallet is simply waiting on the gateway to confirm.
-    var next = card.querySelector('[data-monno="next"]');
-    if (next) {
-      var remaining = nextOpenStep(effectiveDone);
-      next.hidden = false;
-      var detected = effectiveDone.deposit && !state.done.deposit;
-      if (remaining) {
-        next.textContent = detected
-          ? 'Setup detected on this page \u2014 tick it, or carry on if every network is done.'
-          : 'Next: ' + remaining.title;
-      } else {
-        // With the cold wallet folded in, "done" means the wizard is finished.
-        // Whether money can actually move is PayRam's call, reported in Monno.
-        next.textContent = 'Setup done \u2014 Monno will show \u201Cready\u201D once PayRam confirms your payout wallet.';
-      }
-    }
-
-    // Always offer the payout-address page, but describe it for what it is.
-    var coldLink = card.querySelector('[data-monno="cold-link"]');
-    if (coldLink) {
-      coldLink.hidden = false;
-      coldLink.innerHTML = 'Need to change your payout address later? '
-        + '<a href="' + COLD_WALLET_PATH + '">Manage cold wallets</a>';
-    }
-
-    var back = card.querySelector('[data-monno="back"]');
-    if (back) back.setAttribute('href', backUrl());
   }
 
   /* ------------------------------------------------------------------ *
    * Boot
    * ------------------------------------------------------------------ */
 
+  function apply() {
+    if (!hasSession() || !isOrganizer()) return;
+    ensureStyle();
+    suppressPermissionToast();
+    hideNav();
+    hideActions();
+  }
+
   function boot() {
     apply();
-    updateGuide();
+    updateBanner();
 
-    // Vendors re-render on client-side navigation, so re-check. Throttled to a
-    // frame: the guide is cheap, but this page isn't ours and the observer
-    // fires on every DOM change the console makes.
+    // Vendors re-render on client-side navigation, so re-check.
     if (!window.__monnoObserver) {
       var scheduled = false;
       var observer = new MutationObserver(function () {
@@ -661,7 +336,7 @@
         requestAnimationFrame(function () {
           scheduled = false;
           apply();
-          updateGuide();
+          updateBanner();
         });
       });
       observer.observe(document.body || document.documentElement, {childList: true, subtree: true});
@@ -669,24 +344,14 @@
     }
 
     // A couple of delayed passes make the first paint deterministic.
-    setTimeout(function () { apply(); updateGuide(); }, 300);
-    setTimeout(function () { apply(); updateGuide(); }, 1500);
+    setTimeout(function () { apply(); updateBanner(); }, 300);
+    setTimeout(function () { apply(); updateBanner(); }, 1500);
 
-    // The observer only sees childList changes, so a dialog hidden by toggling
-    // its style or class would not wake us. A light poll covers that without
-    // observing attributes across a page that isn't ours.
+    // The observer only sees childList changes; a light poll covers attribute
+    // toggles without observing attributes across a page that isn't ours.
     if (!window.__monnoPoll) {
       window.__monnoPoll = true;
-      setInterval(function () { apply(); updateGuide(); }, 2000);
-    }
-
-    // The default open/collapsed state depends on the viewport, so re-evaluate
-    // when it changes (rotate, resize) unless the organizer has chosen already.
-    if (!window.__monnoResize) {
-      window.__monnoResize = true;
-      window.addEventListener('resize', function () {
-        if (readState().open === null) updateGuide();
-      });
+      setInterval(function () { apply(); updateBanner(); }, 2000);
     }
   }
 
