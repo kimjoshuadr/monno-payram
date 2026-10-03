@@ -287,7 +287,7 @@
     return [
       '#' + GUIDE_ID + ', #' + PILL_ID + ' * { box-sizing: border-box; }',
       '#' + GUIDE_ID + ' {',
-      '  position: fixed; z-index: 50; right: 20px; bottom: 20px; width: 340px;',
+      '  position: fixed; z-index: 2147483000; right: 20px; bottom: 20px; width: 340px;',
       '  max-width: calc(100vw - 32px); background: #fff; color: #1e293b;',
       '  border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden;',
       '  box-shadow: 0 12px 32px rgba(15,23,42,.18);',
@@ -315,7 +315,7 @@
       '#' + GUIDE_ID + ' .monno-guide-back:hover { text-decoration: underline; }',
       '#' + GUIDE_ID + ' .monno-guide-hide { border: 0; background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; }',
       '#' + GUIDE_ID + ' .monno-guide-hide:hover { color: #475569; }',
-      '#' + PILL_ID + ' { position: fixed; z-index: 50; right: 20px; bottom: 20px; background: #4f46e5; color: #fff; border: 0; border-radius: 99px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px rgba(79,70,229,.35); }',
+      '#' + PILL_ID + ' { position: fixed; z-index: 2147483000; right: 20px; bottom: 20px; background: #4f46e5; color: #fff; border: 0; border-radius: 99px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px rgba(79,70,229,.35); }',
       '#' + PILL_ID + '[hidden] { display: none !important; }',
       '@media (max-width: 900px) {',
       '  #' + GUIDE_ID + ' { right: 0; left: 0; bottom: 0; width: auto; max-width: none; border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); max-height: 74vh; display: flex; flex-direction: column; }',
