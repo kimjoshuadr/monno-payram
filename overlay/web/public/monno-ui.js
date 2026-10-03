@@ -248,13 +248,29 @@
   // The console spends /manageWallet/deposit-wallet on two states: before a
   // wallet exists it is the "Set Up Deposit Wallet" landing page, and after it
   // is the wallet list. That transition is one place we can honestly infer
-  // progress, so use it: if the page shows wallets rather than the create
-  // prompt, step one is done.
+  // progress, so use it.
+  //
+  // Read the vendor's own content, never document.body — our card lives in the
+  // body too, so its own words ("Create your deposit wallet") would otherwise
+  // count as the console's and the check could never pass. The console does not
+  // use <main>, so subtract our two nodes from the body instead.
+  function vendorText() {
+    var clone = document.body.cloneNode(true);
+    [GUIDE_ID, PILL_ID].forEach(function (id) {
+      var el = clone.querySelector('#' + id);
+      if (el) el.remove();
+    });
+    return clone.innerText || '';
+  }
+
   function depositWalletExists() {
     if (location.pathname.indexOf('/manageWallet/deposit-wallet') === -1) return false;
-    var body = document.body ? document.body.innerText || '' : '';
-    if (/Set Up Deposit Wallet/i.test(body)) return false;
-    return /Deposit Wallet\s*\d+/i.test(body) || /ready to accept payments/i.test(body) || /\/\s*ready\b/i.test(body);
+    var text = vendorText();
+    // No console content yet (white screen): do not infer anything.
+    if (text === '') return false;
+    // A wallet row in the list is the proof. The "Set Up Deposit Wallet" button
+    // stays on the page even once wallets exist, so it cannot be the signal.
+    return /Deposit Wallet\s*\d+/i.test(text) || /ready to accept payments/i.test(text);
   }
 
   function currentStepId() {
@@ -511,9 +527,15 @@
       if (!li) return;
       var isDone = effectiveDone[step.id];
       li.classList.toggle('is-done', isDone);
+      // A step we can see is already satisfied should read as satisfied, even
+      // if the organizer never ticked it.
+      var inferred = isDone && !state.done[step.id];
       li.classList.toggle('is-current', step.id === active && !isDone);
       var check = li.querySelector('[data-monno="toggle"]');
-      if (check) check.setAttribute('aria-pressed', isDone ? 'true' : 'false');
+      if (check) {
+        check.setAttribute('aria-pressed', isDone ? 'true' : 'false');
+        if (inferred) check.setAttribute('title', 'Detected on this page');
+      }
       // A step you are standing on but have already done should say so, rather
       // than keep asking you to do it.
       var hint = li.querySelector('[data-monno="done-hint"]');
@@ -529,8 +551,11 @@
     if (next) {
       var remaining = nextOpenStep(effectiveDone);
       next.hidden = false;
+      var detectedDeposit = effectiveDone.deposit && !state.done.deposit;
       next.textContent = remaining
-        ? 'Next: ' + remaining.title
+        ? (detectedDeposit && remaining.id === 'cold'
+          ? 'Deposit wallet detected \u2014 next: ' + remaining.title
+          : 'Next: ' + remaining.title)
         : 'Both done \u2014 waiting for PayRam to confirm your payout wallet. Check the status in Monno.';
     }
 
