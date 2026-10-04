@@ -3,6 +3,9 @@
 # over HTTP so they can be moved to the new host. Delete this app (and the
 # /root/payram-migrate directory) as soon as the migration is done.
 #
+# Note: Docker Compose interpolates *both* $X and ${X} in this file, so the
+# shell's own variables are written $$X to survive.
+#
 # The token in the URL is the only protection, so keep it short-lived.
 services:
   migrator:
@@ -12,28 +15,28 @@ services:
     command:
       - |
         set -e
-        TOKEN=${MIGRATE_TOKEN}
-        HOSTDIR=/root/payram-migrate/$TOKEN
-        OUT=/export/$TOKEN
-        mkdir -p "$OUT"
+        TOKEN="${MIGRATE_TOKEN}"
+        HOSTDIR="/root/payram-migrate/$$TOKEN"
+        OUT="/export/$$TOKEN"
+        mkdir -p "$$OUT"
 
         echo "=== containers ==="
         docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}'
         echo "=== volumes ==="
         docker volume ls --format '{{.Name}}'
 
-        C=$(docker ps -a --format '{{.Names}}' | grep -i payram | head -1 || true)
-        echo "payram container: $C"
-        if [ -n "$C" ]; then docker stop "$C" || true; fi
+        C=$$(docker ps -a --format '{{.Names}}' | grep -i payram | head -1 || true)
+        echo "payram container: $$C"
+        if [ -n "$$C" ]; then docker stop "$$C" || true; fi
 
-        for V in $(docker volume ls --format '{{.Name}}' | grep -i payram); do
-          echo "packing $V"
-          docker run --rm -v "$V":/src:ro -v "$HOSTDIR":/out alpine \
-            sh -c "cd /src && tar czf /out/$V.tgz ."
+        for V in $$(docker volume ls --format '{{.Name}}' | grep -i payram); do
+          echo "packing $$V"
+          docker run --rm -v "$$V":/src:ro -v "$$HOSTDIR":/out alpine \
+            sh -c "cd /src && tar czf /out/$$V.tgz ."
         done
 
         echo "=== export ==="
-        ls -l "$OUT"
+        ls -l "$$OUT"
 
         # No auth in busybox httpd, so the token is the whole secret; it is
         # removed with the app.
