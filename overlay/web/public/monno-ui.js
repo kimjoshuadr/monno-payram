@@ -58,7 +58,7 @@
   // A version marker so a stale copy is never mistaken for a broken fix: the
   // overlay is served from a fixed URL with no cache-busting, and a long-lived
   // tab will happily keep running an old one.
-  var MONNO_UI_VERSION = '2026-10-04.2';
+  var MONNO_UI_VERSION = '2026-10-04.3';
   try { window.__monnoUiVersion = MONNO_UI_VERSION; } catch (e) {}
 
   var ORGANIZER_KEY = 'monno_setup_organizer';
@@ -239,14 +239,46 @@
   var stateFetchedAt = 0;
   var STATE_TTL_MS = 30000;
 
+  // The console keeps the project being viewed in the URL (/project/{id}/...).
+  // An account can own several projects, so "the first one" is NOT necessarily
+  // the one on screen: reading the wrong project nags about a wallet that
+  // belongs to a different project.
+  function currentProjectId() {
+    var match = location.pathname.match(/\/project\/(\d+)(?:\/|$)/);
+    return match ? match[1] : null;
+  }
+
   function fetchSetupState() {
     return apiGet('/api/v1/external-platform/all').then(function (projects) {
-      var project = listOf(projects)[0];
+      var all = listOf(projects);
+      var wanted = currentProjectId();
+      var project = null;
+
+      if (wanted) {
+        for (var i = 0; i < all.length; i++) {
+          if (all[i] && String(all[i].id) === wanted) { project = all[i]; break; }
+        }
+      }
+
+      // Off a project page (dashboard, payments, ...) the project is ambiguous
+      // when the account owns more than one. Fall back to the only project when
+      // there is exactly one; otherwise say nothing rather than nag wrongly.
+      if (!project && !wanted) {
+        project = all.length === 1 ? all[0] : null;
+      }
+
       if (!project || !project.id) return { known: false };
+
       return apiGet('/api/v1/project/' + project.id + '/wallets').then(function (wallets) {
         var deposit = hasConfiguredDepositWallet(wallets);
         var hot = hasHotWallet(wallets);
-        return { known: true, depositConfigured: deposit, hotWallet: hot, ready: deposit && hot };
+        return {
+          known: true,
+          projectId: project.id,
+          depositConfigured: deposit,
+          hotWallet: hot,
+          ready: deposit && hot,
+        };
       });
     }).catch(function () {
       // Unreachable or expired session: say nothing rather than nag wrongly.
@@ -255,12 +287,17 @@
   }
 
   function getSetupState() {
+    // Key the cache by project: switching projects must not serve the previous
+    // project's answer for the next 30 seconds.
+    var key = currentProjectId() || 'none';
     var now = Date.now();
-    if (stateCache && (now - stateFetchedAt) < STATE_TTL_MS) {
-      return Promise.resolve(stateCache);
+
+    if (stateCache && stateCache.key === key && (now - stateFetchedAt) < STATE_TTL_MS) {
+      return Promise.resolve(stateCache.state);
     }
+
     return fetchSetupState().then(function (state) {
-      stateCache = state;
+      stateCache = {key: key, state: state};
       stateFetchedAt = Date.now();
       return state;
     });
