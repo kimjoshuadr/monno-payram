@@ -228,8 +228,10 @@
   }
 
   function hasHotWallet(wallets) {
+    // A hot wallet that is attached but inactive looks configured in the console
+    // while paying no gas, so nothing sweeps. Only an active one counts.
     return listOf(wallets).some(function (wallet) {
-      return wallet && wallet.walletType === 'hot_wallet';
+      return wallet && wallet.walletType === 'hot_wallet' && wallet.status === 'active';
     });
   }
 
@@ -282,7 +284,7 @@
       return 'Finish crypto setup \u2014 set up your deposit wallet and a hot wallet so payments can settle.';
     }
     if (state.depositConfigured && !state.hotWallet) {
-      return 'Almost there \u2014 add a gas-funded hot wallet so your sales can sweep to your payout wallet.';
+      return 'Almost there \u2014 add or activate a gas-funded hot wallet so your sales can sweep to your payout wallet.';
     }
     return 'Finish crypto setup \u2014 set up your deposit wallet so payments can settle.';
   }
