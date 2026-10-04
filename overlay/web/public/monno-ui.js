@@ -37,20 +37,14 @@
     'Developers',
     'Analytics',
     'Withdraw',
-    'Projects',
-    'Hot wallet',
-    'Hot Wallet',
-    'Hot wallets',
-    'Hot Wallets'
+    'Projects'
   ];
 
   // Actions on ordinary pages that are not the organizer's to take. Matched
   // against the text of clickable elements; kept narrow so nothing they need
-  // (deposit wallet setup) is caught.
+  // (deposit wallet + hot wallet setup) is caught.
   var HIDE_ACTIONS = [
     'Assign projects to accept payments',
-    'Add Hot Wallet',
-    'Set Up Hot Wallet',
     'Create Project',
     'Create a project',
     'New Project',
@@ -64,11 +58,12 @@
   // A version marker so a stale copy is never mistaken for a broken fix: the
   // overlay is served from a fixed URL with no cache-busting, and a long-lived
   // tab will happily keep running an old one.
-  var MONNO_UI_VERSION = '2026-10-04.1';
+  var MONNO_UI_VERSION = '2026-10-04.2';
   try { window.__monnoUiVersion = MONNO_UI_VERSION; } catch (e) {}
 
   var ORGANIZER_KEY = 'monno_setup_organizer';
   var DEPOSIT_WALLET_PATH = '/manageWallet/deposit-wallet';
+  var HOT_WALLET_PATH = '/manageWallet/hot-wallet';
 
   /* ------------------------------------------------------------------ *
    * Who is this?
@@ -218,9 +213,10 @@
     return [];
   }
 
-  // A project is "set up" when it has a deposit wallet whose sweep destination
-  // (the payout/cold wallet) is set. That is the same fact Monno reports as
-  // "ready", read from the same place.
+  // A project can accept payments once it has a deposit wallet whose sweep
+  // destination (the payout/cold wallet) is set, and it can *sweep* once it also
+  // has a hot wallet to pay gas. Setup is done when both hold — the same facts
+  // Monno reports as "ready", read from the same place.
   function hasConfiguredDepositWallet(wallets) {
     return listOf(wallets).some(function (wallet) {
       if (!wallet || wallet.walletType !== 'deposit_wallet') return false;
@@ -231,7 +227,13 @@
     });
   }
 
-  var stateCache = null;      // {known, configured}
+  function hasHotWallet(wallets) {
+    return listOf(wallets).some(function (wallet) {
+      return wallet && wallet.walletType === 'hot_wallet';
+    });
+  }
+
+  var stateCache = null;      // {known, depositConfigured, hotWallet, ready}
   var stateFetchedAt = 0;
   var STATE_TTL_MS = 30000;
 
@@ -240,7 +242,9 @@
       var project = listOf(projects)[0];
       if (!project || !project.id) return { known: false };
       return apiGet('/api/v1/project/' + project.id + '/wallets').then(function (wallets) {
-        return { known: true, configured: hasConfiguredDepositWallet(wallets) };
+        var deposit = hasConfiguredDepositWallet(wallets);
+        var hot = hasHotWallet(wallets);
+        return { known: true, depositConfigured: deposit, hotWallet: hot, ready: deposit && hot };
       });
     }).catch(function () {
       // Unreachable or expired session: say nothing rather than nag wrongly.
@@ -273,27 +277,44 @@
     if (el) el.remove();
   }
 
-  function ensureBanner() {
+  function bannerMessage(state) {
+    if (!state.depositConfigured && !state.hotWallet) {
+      return 'Finish crypto setup \u2014 set up your deposit wallet and a hot wallet so payments can settle.';
+    }
+    if (state.depositConfigured && !state.hotWallet) {
+      return 'Almost there \u2014 add a gas-funded hot wallet so your sales can sweep to your payout wallet.';
+    }
+    return 'Finish crypto setup \u2014 set up your deposit wallet so payments can settle.';
+  }
+
+  function ensureBanner(state) {
     var el = document.getElementById(BANNER_ID);
-    if (el) return el;
 
-    el = document.createElement('div');
-    el.id = BANNER_ID;
-    el.setAttribute('role', 'status');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = BANNER_ID;
+      el.setAttribute('role', 'status');
+      el.addEventListener('click', function (event) {
+        if (event.target.closest('[data-monno="dismiss"]')) {
+          try { sessionStorage.setItem(BANNER_DISMISS_KEY, '1'); } catch (e) {}
+          removeBanner();
+        }
+      });
+      // In normal flow at the very top of the page, so the console just shifts
+      // down a little instead of being overlapped.
+      document.body.insertBefore(el, document.body.firstChild);
+    }
+
     el.innerHTML =
-      '<span class="monno-banner-msg">Finish crypto setup \u2014 set up your deposit wallet ' +
-      'so your sales can settle to your payout wallet.</span>' +
-      '<a class="monno-banner-link" href="' + DEPOSIT_WALLET_PATH + '">Set up deposit wallet</a>' +
-      '<button type="button" class="monno-banner-hide">Dismiss</button>';
+      '<span class="monno-banner-msg">' + bannerMessage(state) + '</span>' +
+      (!state.depositConfigured
+        ? '<a class="monno-banner-link" href="' + DEPOSIT_WALLET_PATH + '">Set up deposit wallet</a>'
+        : '') +
+      (!state.hotWallet
+        ? '<a class="monno-banner-link" href="' + HOT_WALLET_PATH + '">Set up hot wallet</a>'
+        : '') +
+      '<button type="button" class="monno-banner-hide" data-monno="dismiss">Dismiss</button>';
 
-    el.querySelector('.monno-banner-hide').addEventListener('click', function () {
-      try { sessionStorage.setItem(BANNER_DISMISS_KEY, '1'); } catch (e) {}
-      removeBanner();
-    });
-
-    // In normal flow at the very top of the page, so the console just shifts
-    // down a little instead of being overlapped.
-    document.body.insertBefore(el, document.body.firstChild);
     return el;
   }
 
@@ -306,8 +327,8 @@
     getSetupState().then(function (state) {
       if (isBuyerArea() || bannerDismissed()) { removeBanner(); return; }
       if (!state.known) { removeBanner(); return; }   // fail-safe: don't nag
-      if (state.configured) { removeBanner(); return; }
-      ensureBanner();
+      if (state.ready) { removeBanner(); return; }
+      ensureBanner(state);
     });
   }
 
