@@ -6,7 +6,7 @@ services:
     build:
       context: .
       args:
-        PAYRAM_VERSION: ${PAYRAM_VERSION:-3.8.2}
+        PAYRAM_VERSION: ${PAYRAM_VERSION:-3.9.0}
     restart: unless-stopped
     environment:
       AES_KEY: ${AES_KEY}
